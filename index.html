@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeetAI · Transcriptor de reuniones</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+<script>
+  // Enables multi-threaded CPU transcription on GitHub Pages (see sw.js).
+  if (!window.crossOriginIsolated && 'serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+      if (!sessionStorage.getItem('meetai-sw-reload')) {
+        sessionStorage.setItem('meetai-sw-reload', '1');
+        location.reload();
+      }
+    }).catch(() => {});
+  }
+</script>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --ink: #1b1f24; --muted: #5d6673; --line: #e2e5ea;
+    --accent: #2456d6; --accent-ink: #ffffff; --me: #2456d6; --me-bg: #eaf0ff;
+    --others: #b85c00; --others-bg: #fff2e4; --warn-bg: #fff6d6; --warn-ink: #6b5200;
+    --err-bg: #ffe3e3; --err-ink: #8a1c1c; --ok: #1f8a4c; --rec: #d42a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --panel: #1d2127; --ink: #e9ecf0; --muted: #9aa3ae; --line: #2e343c;
+      --accent: #6f9bff; --accent-ink: #0d1320; --me: #8fb0ff; --me-bg: #1d2a45;
+      --others: #ffb26b; --others-bg: #3a2a18; --warn-bg: #3a3212; --warn-ink: #f3dc85;
+      --err-bg: #431d1d; --err-ink: #ffb4b4; --ok: #5fd08e; --rec: #ff6161;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 120px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; color: var(--muted); max-width: 100%; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .pill.ready .dot { background: var(--ok); }
+  .pill.loading .dot { background: #e0a800; animation: pulse 1s infinite; }
+  .pill.bad .dot { background: var(--rec); }
+  progress { width: 110px; height: 6px; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 9px 14px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.stop { background: var(--rec); color: #fff; border-color: var(--rec); font-weight: 600; }
+  button.small { padding: 5px 10px; font-size: 13px; }
+  .btn input { display: none; }
+
+  .sources { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  @media (max-width: 640px) { .sources { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .card .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card b { font-size: 14px; }
+  .card .state { font-size: 12px; color: var(--muted); }
+  .card .state.on { color: var(--ok); }
+  .card .state.off { color: var(--rec); }
+  .meter { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  .meter i { display: block; height: 100%; width: 0; transition: width .08s; }
+  #card-me .meter i { background: var(--me); }
+  #card-others .meter i { background: var(--others); }
+  .card select { font: inherit; font-size: 12px; max-width: 60%; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+
+  #notice { display: none; padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; }
+  #notice.show { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  #notice.info { background: var(--me-bg); }
+  #notice.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  #notice.error { background: var(--err-bg); color: var(--err-ink); }
+
+  #transcript { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 16px; min-height: 280px; }
+  .empty { color: var(--muted); padding: 30px 8px; text-align: center; }
+  .empty ol { text-align: left; display: inline-block; margin: 8px 0 0; }
+  .row { display: grid; grid-template-columns: 118px 1fr; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .row:first-child, .row.cont { border-top: none; }
+  .row.cont { padding-top: 0; }
+  .row.cont .meta { visibility: hidden; }
+  .meta { font-size: 12px; color: var(--muted); padding-top: 2px; }
+  .who { display: inline-block; font-weight: 600; font-size: 12px; padding: 1px 8px; border-radius: 6px; margin-right: 4px; }
+  .me .who { color: var(--me); background: var(--me-bg); }
+  .others .who { color: var(--others); background: var(--others-bg); }
+  .text { outline: none; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .text:focus { background: var(--bg); box-shadow: 0 0 0 2px var(--bg); }
+  .pending .text { color: var(--muted); font-style: italic; }
+  .errored .text { color: var(--err-ink); }
+  .echo { display: none; }
+  body.show-echo .echo { display: grid; opacity: .45; }
+  body.show-echo .echo .text { text-decoration: line-through; }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; gap: 0; } .row.cont .meta { display: none; } }
+
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); }
+  .bar .inner { max-width: 980px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .bar .stats { flex: 1; font-size: 13px; color: var(--muted); min-width: 200px; }
+  .bar .stats a { color: var(--accent); cursor: pointer; }
+  .bar select { font: inherit; font-size: 13px; padding: 5px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); max-width: 230px; }
+  .rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--rec); margin-right: 6px; animation: pulse 1.2s infinite; vertical-align: middle; }
+
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: 180px 1fr; gap: 10px 14px; align-items: center; margin-top: 12px; }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .grid select, .grid input[type=text] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); width: 100%; max-width: 420px; }
+  .hint { font-size: 13px; color: var(--muted); }
+  details h3 { font-size: 14px; margin: 16px 0 4px; }
+  details li { margin: 3px 0; }
+  kbd { font: 12px ui-monospace, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎙️ MeetAI <small>Transcripción de reuniones en español · todo se procesa en tu PC</small></h1>
+    <span id="model-status" class="pill loading"><span class="dot"></span><span id="model-text">Cargando…</span><progress id="model-progress" hidden></progress></span>
+  </header>
+
+  <div class="controls">
+    <button id="btn-start" class="primary">● Empezar reunión</button>
+    <button id="btn-continue" hidden>Continuar esta reunión</button>
+    <button id="btn-stop" class="stop" hidden>■ Parar</button>
+    <button id="btn-share" hidden>🔊 Compartir audio de la reunión</button>
+    <button id="btn-demo">▶ Probar con una conversación de ejemplo</button>
+    <label class="btn" title="Grabaciones de Teams, notas de voz, vídeos…">📁 Transcribir un archivo<input id="file" type="file" accept="audio/*,video/*"></label>
+  </div>
+
+  <div class="sources">
+    <div class="card" id="card-me">
+      <div class="top"><b>🎤 <span class="name-me">Yo</span> — micrófono</b><select id="mic" title="Micrófono"><option value="">Micrófono predeterminado</option></select></div>
+      <div class="meter"><i id="meter-me"></i></div>
+      <div class="state" id="state-me">Inactivo</div>
+    </div>
+    <div class="card" id="card-others">
+      <div class="top"><b>🔊 <span class="name-others">Otros</span> — audio del PC</b></div>
+      <div class="meter"><i id="meter-others"></i></div>
+      <div class="state" id="state-others">Inactivo</div>
+    </div>
+  </div>
+
+  <div id="notice"><span id="notice-text"></span><span id="notice-actions"></span></div>
+
+  <main id="transcript"></main>
+
+  <details id="settings">
+    <summary>⚙️ Ajustes</summary>
+    <div class="grid">
+      <label for="set-model">Calidad del modelo</label>
+      <div>
+        <select id="set-model">
+          <option value="onnx-community/whisper-base">Rápido (menos preciso)</option>
+          <option value="onnx-community/whisper-small">Equilibrado (recomendado)</option>
+          <option value="onnx-community/whisper-large-v3-turbo">Máxima precisión (necesita un PC potente)</option>
+        </select>
+        <div class="hint">Si la transcripción se va quedando atrás, elige uno más rápido.</div>
+      </div>
+      <label for="set-device">Motor</label>
+      <div>
+        <select id="set-device">
+          <option value="auto">Automático</option>
+          <option value="webgpu">Tarjeta gráfica (WebGPU)</option>
+          <option value="wasm">Procesador</option>
+        </select>
+      </div>
+      <label for="set-me">Mi nombre</label>
+      <input id="set-me" type="text" maxlength="30">
+      <label for="set-others">Nombre para los demás</label>
+      <input id="set-others" type="text" maxlength="30">
+      <label for="set-echo">Quitar eco</label>
+      <label class="hint"><input id="set-echo" type="checkbox"> Si usas altavoces en vez de cascos, tu micrófono también oye a los demás. Esto oculta esas frases repetidas.</label>
+    </div>
+  </details>
+
+  <details id="help">
+    <summary>❓ Cómo se usa</summary>
+    <h3>En una reunión de Teams</h3>
+    <ol>
+      <li>Abre esta página en <b>Edge</b> o <b>Chrome</b> antes de la reunión y espera a que ponga <i>Listo</i>.</li>
+      <li>Pulsa <b>Empezar reunión</b>. Se abrirá la ventana de compartir: elige <b>Toda la pantalla</b> y activa <b>Compartir también el audio del sistema</b>. Esto es solo para que la página oiga lo que suena en tu PC (no se comparte con nadie).</li>
+      <li>Da permiso al micrófono si lo pide.</li>
+      <li>Vuelve a Teams. Puedes dejar esta pestaña en segundo plano: sigue transcribiendo.</li>
+      <li>Al terminar, pulsa <b>Parar</b> y usa <b>Copiar</b> o <b>Descargar .txt</b>. Todo queda guardado en este navegador (menú <i>Reuniones</i> abajo).</li>
+    </ol>
+    <h3>Probar sin reunión</h3>
+    <ul>
+      <li><b>Probar con una conversación de ejemplo</b>: reproduce un diálogo grabado con dos voces y lo transcribe como si fuera una reunión.</li>
+      <li>O prueba real: pulsa <b>Empezar reunión</b>, pon un vídeo o un pódcast en español (YouTube, RTVE…) y habla tú a la vez. El vídeo hará de "los demás".</li>
+    </ul>
+    <h3>Si algo falla</h3>
+    <ul>
+      <li><b>No aparece nada de "Otros"</b>: al compartir no marcaste el audio del sistema. Pulsa <b>Compartir audio de la reunión</b> y activa la casilla de audio.</li>
+      <li><b>Oyes Teams por unos cascos y no se capta</b>: pon esos cascos como dispositivo de salida predeterminado de Windows (icono del altavoz de la barra de tareas).</li>
+      <li><b>El contador "pendiente" no para de crecer</b>: tu PC no llega a tiempo. No se pierde nada (acabará de transcribir después), pero puedes elegir un modelo más rápido en Ajustes.</li>
+      <li>Lo que digas con el micrófono silenciado en Teams también se transcribe aquí.</li>
+    </ul>
+  </details>
+</div>
+
+<div class="bar"><div class="inner">
+  <div class="stats" id="stats">Sin reunión en curso.</div>
+  <button id="btn-copy" class="small">📋 Copiar</button>
+  <button id="btn-download" class="small">⬇️ Descargar .txt</button>
+  <select id="history" title="Reuniones guardadas en este navegador"></select>
+  <button id="btn-delete" class="small" title="Borrar esta reunión">🗑️</button>
+</div></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
