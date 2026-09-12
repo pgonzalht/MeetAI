@@ -5,3 +5,4 @@ desktop/dist/
 desktop/app/
 desktop/models/
 desktop/probe-script.js
+desktop/dist-build.log
