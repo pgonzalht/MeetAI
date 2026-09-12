@@ -35,6 +35,9 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  .desktop-only { display: none; }
+  body.desktop .desktop-only { display: revert; }
+  body.desktop .web-only { display: none; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 120px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -182,13 +185,14 @@
     <h3>En una reunión de Teams</h3>
     <ol>
       <li>Abre esta página en <b>Edge</b> o <b>Chrome</b> antes de la reunión y espera a que ponga <i>Listo</i>.</li>
-      <li>Pulsa <b>Empezar reunión</b>. Se abrirá la ventana de compartir: elige <b>Toda la pantalla</b> y activa <b>Compartir también el audio del sistema</b>. Esto es solo para que la página oiga lo que suena en tu PC (no se comparte con nadie).</li>
+      <li class="web-only">Pulsa <b>Empezar reunión</b>. Se abrirá la ventana de compartir: elige <b>Toda la pantalla</b> y activa <b>Compartir también el audio del sistema</b>. Esto es solo para que la página oiga lo que suena en tu PC (no se comparte con nadie).</li>
+      <li class="desktop-only">Pulsa <b>Empezar reunión</b>. La aplicación coge sola el audio del PC; no hay que compartir nada.</li>
       <li>Da permiso al micrófono si lo pide.</li>
       <li>Vuelve a Teams. Puedes dejar esta pestaña en segundo plano: sigue transcribiendo.</li>
       <li>Al terminar, pulsa <b>Parar</b> y usa <b>Copiar</b> o <b>Descargar .txt</b>. Todo queda guardado en este navegador (menú <i>Reuniones</i> abajo).</li>
     </ol>
-    <h3>Tenerla a mano como una aplicación</h3>
-    <ul>
+    <h3 class="web-only">Tenerla a mano como una aplicación</h3>
+    <ul class="web-only">
       <li>En Edge: menú <b>…</b> → <b>Aplicaciones</b> → <b>Instalar este sitio como una aplicación</b>. Queda con su icono en el menú de inicio y se abre en su propia ventana, sin barra de navegador.</li>
       <li><b>Después de la primera vez funciona sin internet</b>: la aplicación y el modelo de voz se quedan guardados en tu PC.</li>
     </ul>
@@ -199,7 +203,7 @@
     </ul>
     <h3>Si algo falla</h3>
     <ul>
-      <li><b>No aparece nada de "Otros"</b>: al compartir no marcaste el audio del sistema. Pulsa <b>Compartir audio de la reunión</b> y activa la casilla de audio.</li>
+      <li class="web-only"><b>No aparece nada de "Otros"</b>: al compartir no marcaste el audio del sistema. Pulsa <b>Compartir audio de la reunión</b> y activa la casilla de audio.</li>
       <li><b>Oyes Teams por unos cascos y no se capta</b>: pon esos cascos como dispositivo de salida predeterminado de Windows (icono del altavoz de la barra de tareas).</li>
       <li><b>El contador "pendiente" no para de crecer</b>: tu PC no llega a tiempo. No se pierde nada (acabará de transcribir después), pero puedes elegir un modelo más rápido en Ajustes.</li>
       <li>Lo que digas con el micrófono silenciado en Teams también se transcribe aquí.</li>

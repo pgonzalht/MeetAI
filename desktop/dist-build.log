@@ -1,0 +1,28 @@
+
+> meetai@1.0.0 dist
+> node build.mjs && electron-builder
+
+app/ listo
+  • electron-builder  version=26.15.3 os=10.0.26200
+  • loaded configuration  file=package.json ("build" field)
+  • executing @electron/rebuild  electronVersion=44.3.0 arch=x64 buildFromSource=false workspaceRoot=C:\Users\pgonz\Desktop\MeetAI\desktop projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=44.3.0 appOutDir=dist\win-unpacked
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=C:\Users\pgonz\Desktop\MeetAI\desktop\dist\win-unpacked
+  • asar usage is disabled — this is strongly not recommended  solution=enable asar and use asarUnpack to unpack files that must be externally available
+  • searching for node modules  pm=npm searchDir=C:\Users\pgonz\Desktop\MeetAI\desktop
+  • searching for node modules  pm=traversal searchDir=C:\Users\pgonz\Desktop\MeetAI\desktop
+  • using manual traversal of node_modules to build dependency tree
+  • no node modules returned while searching directories  searchDirectories=[""]
+  • asar usage is disabled — this is strongly not recommended  solution=enable asar and use asarUnpack to unpack files that must be externally available
+  • signing with signtool.exe  path=dist\win-unpacked\MeetAI.exe
+  • building        target=zip arch=x64 file=dist\MeetAI-1.0.0-win.zip
+  • building        target=nsis file=dist\MeetAI-Instalador-1.0.0.exe archs=x64 oneClick=true perMachine=false
+  • downloaded      label=nsis-3.0.4.1.7z progress=100%
+  • signing with signtool.exe  path=dist\win-unpacked\resources\elevate.exe
+  • downloaded      label=nsis-resources-3.4.1.7z progress=100%
+  • signing with signtool.exe  path=dist\MeetAI-Instalador-1.0.0.__uninstaller.exe
+  • signing with signtool.exe  path=dist\MeetAI-Instalador-1.0.0.exe
+  • building block map  blockMapFile=dist\MeetAI-Instalador-1.0.0.exe.blockmap

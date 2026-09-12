@@ -1,0 +1,68 @@
+{
+  "name": "meetai",
+  "version": "1.0.0",
+  "description": "Transcriptor de reuniones en local",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node build.mjs && electron-builder"
+  },
+  "author": "pgonzalht",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "@huggingface/transformers": "^3.8.1"
+  },
+  "build": {
+    "appId": "es.pgonzalht.meetai",
+    "productName": "MeetAI",
+    "asar": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "models",
+        "to": "models"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "MeetAI-Instalador-${version}.${ext}",
+      "shortcutName": "MeetAI"
+    },
+    "compression": "maximum",
+    "electronLanguages": [
+      "es-ES",
+      "en-US"
+    ]
+  }
+}

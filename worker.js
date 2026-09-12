@@ -1,6 +1,20 @@
 // Transcription engine (Whisper running locally in the browser). Audio never leaves the PC:
 // the only downloads are the library and the model files, once, then they are cached.
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
+const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js'; /* BUILD:LIB */
+// The listener goes first: loading the library takes a moment, and a message that arrives
+// meanwhile would be lost if nobody were listening yet.
+const waiting = [];
+let accept = (m) => waiting.push(m);
+self.onmessage = (e) => accept(e.data);
+
+let pipeline, env;
+try {
+  ({ pipeline, env } = await import(LIB));
+} catch (err) {
+  postMessage({ type: 'fatal', message: 'No se pudo cargar el motor de transcripción: ' + ((err && err.message) || err) });
+  throw err;
+}
+/* BUILD:CONFIG */
 
 env.allowLocalModels = false;
 const threads = self.crossOriginIsolated ? Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 2)) : 1;
@@ -102,6 +116,7 @@ async function handle(m) {
 
 // One job at a time, in arrival order.
 let chain = Promise.resolve();
-self.onmessage = (e) => {
-  chain = chain.then(() => handle(e.data));
+accept = (m) => {
+  chain = chain.then(() => handle(m));
 };
+for (const m of waiting.splice(0)) accept(m);

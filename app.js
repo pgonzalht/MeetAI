@@ -677,6 +677,7 @@ function updateStats() {
   const echoes = current ? current.items.filter((i) => i.echo).length : 0;
   if (echoes) parts.push(`${echoes} eco${echoes > 1 ? 's' : ''} oculto${echoes > 1 ? 's' : ''} (<a id="toggle-echo">${document.body.classList.contains('show-echo') ? 'ocultar' : 'ver'}</a>)`);
   $('#stats').innerHTML = parts.join(' · ');
+  window.meetai?.setPending(pend.length);
   $('#toggle-echo')?.addEventListener('click', () => {
     document.body.classList.toggle('show-echo');
     updateStats();

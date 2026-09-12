@@ -6,7 +6,10 @@ Transcribe en tiempo real las reuniones de Teams (o de cualquier otra aplicació
 - **Privado.** El reconocimiento de voz (Whisper) funciona dentro de tu navegador. El audio y las transcripciones no salen de tu PC. Solo se descarga el modelo de voz la primera vez.
 - **No depende de Teams.** No usa ninguna API ni necesita permisos en la reunión.
 
-👉 **Abrir la aplicación:** https://pgonzalht.github.io/MeetAI/
+Hay dos formas de usarlo:
+
+- **En el navegador:** https://pgonzalht.github.io/MeetAI/ — no hay que instalar nada; tras la primera visita funciona sin internet.
+- **Como aplicación de Windows:** un ejecutable con todo dentro (navegador, motor y modelo de voz). No necesita internet ni permisos de administrador, y **no pide compartir pantalla**: coge el audio del PC directamente.
 
 ## Cómo se usa
 
@@ -33,6 +36,26 @@ Las reuniones quedan guardadas en ese navegador (desplegable de abajo). El texto
 | Oyes Teams por unos cascos y no se capta | Pon esos cascos como salida predeterminada de Windows. |
 | El contador "pendiente" crece sin parar | El PC no da abasto. No se pierde nada, pero puedes elegir un modelo más rápido en *Ajustes*. |
 | "No se pudo cargar el modelo" | La red de la empresa puede estar bloqueando `huggingface.co` o `cdn.jsdelivr.net`. |
+
+## La aplicación de escritorio (Windows)
+
+Se genera desde la carpeta `desktop/`:
+
+```
+cd desktop
+npm install
+node descargar-modelo.mjs   # baja el modelo de voz a desktop/models (una vez)
+npm run dist
+```
+
+En `desktop/dist/` quedan dos cosas:
+
+- `MeetAI-Instalador-1.0.0.exe`: instala para el usuario actual (sin administrador) y crea el acceso directo.
+- `MeetAI-1.0.0-win.zip`: versión portable; se descomprime y se ejecuta `MeetAI.exe`.
+
+Requisitos del PC de destino: **Windows 10/11 de 64 bits**. Nada más: ni Node.js, ni Python, ni internet.
+
+Al no estar firmado digitalmente, Windows puede mostrar el aviso de SmartScreen ("Windows ha protegido tu PC"): hay que pulsar *Más información → Ejecutar de todas formas*. Algunas empresas bloquean directamente los ejecutables sin firma.
 
 ## Cómo funciona
 
