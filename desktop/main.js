@@ -7,6 +7,17 @@ const path = require('path');
 
 
 const AUTOTEST = process.argv.includes('--autotest');
+// Everything this app stores (settings, saved meetings, caches) goes in a "datos" folder
+// next to the executable, so deleting the app folder leaves nothing behind.
+try {
+  const here = path.dirname(app.getPath('exe'));
+  const data = path.join(here, 'datos');
+  fs.mkdirSync(data, { recursive: true });
+  fs.accessSync(data, fs.constants.W_OK);
+  app.setPath('userData', data);
+} catch {
+  // read-only install folder: fall back to the usual per-user location
+}
 const PROBE = process.argv.includes('--probe');
 const ROOT = path.join(__dirname, 'app');
 // the voice model travels next to the executable, not inside the app folder
@@ -52,14 +63,26 @@ function startServer() {
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Embedder-Policy': 'require-corp',
         'Cross-Origin-Resource-Policy': 'same-origin',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-store',
       });
       fs.createReadStream(file).pipe(res);
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  // A fixed port keeps the origin stable across launches: with a random one the internal
+  // browser would treat each run as a different site and lose saved meetings and settings.
+  const listen = (port, tries) =>
+    new Promise((resolve, reject) => {
+      const onError = (err) => (tries > 0 ? resolve(listen(port + 1, tries - 1)) : reject(err));
+      server.once('error', onError);
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', onError);
+        resolve(server.address().port);
+      });
+    });
+  return listen(PORT, 9);
 }
 
+const PORT = 39247;
 let BASE_URL = '';
 
 function createWindow() {
@@ -143,6 +166,17 @@ function createWindow() {
   });
   return win;
 }
+
+// Two copies running at once would fight over the port, so the second one just
+// brings the first window to the front.
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  const [win] = BrowserWindow.getAllWindows();
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
 
 app.whenReady().then(async () => {
   BASE_URL = 'http://127.0.0.1:' + (await startServer());

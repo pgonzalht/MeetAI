@@ -52,12 +52,18 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": true,
       "artifactName": "MeetAI-Instalador-${version}.${ext}",
-      "shortcutName": "MeetAI"
+      "shortcutName": "MeetAI",
+      "installerLanguages": [
+        "es_ES"
+      ],
+      "language": "1034"
     },
     "compression": "maximum",
     "electronLanguages": [
