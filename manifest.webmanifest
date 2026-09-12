@@ -1,0 +1,16 @@
+{
+  "name": "MeetAI · Transcriptor de reuniones",
+  "short_name": "MeetAI",
+  "description": "Transcribe reuniones en español dentro de tu PC, sin enviar el audio a ningún sitio.",
+  "lang": "es-ES",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#14171b",
+  "theme_color": "#2456d6",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
