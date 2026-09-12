@@ -22,7 +22,7 @@ await writeFile(path.join(out, 'index.html'), html);
 // worker.js: local library, local runtime, bundled model
 let worker = await readFile(path.join(root, 'worker.js'), 'utf8');
 worker = worker.replace(/^const LIB = .*\/\* BUILD:LIB \*\/$/m, "const LIB = './vendor/transformers.min.js'; /* BUILD:LIB */");
-worker = worker.replace('env.allowLocalModels = false;', "env.allowLocalModels = true;\nenv.localModelPath = '/models/';\nenv.backends.onnx.wasm.wasmPaths = '/vendor/ort/';");
+worker = worker.replace('env.allowLocalModels = false;', "env.allowLocalModels = true;\nenv.localModelPath = '/models/';\nenv.backends.onnx.wasm.wasmPaths = '/vendor/ort/';\nenv.useBrowserCache = false;");
 await writeFile(path.join(out, 'worker.js'), worker);
 
 await cp('node_modules/@huggingface/transformers/dist/transformers.min.js', path.join(out, 'vendor', 'transformers.min.js'));
