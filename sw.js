@@ -2,8 +2,8 @@
 // 1. Adds the headers that make the page "cross-origin isolated" (GitHub Pages can't send
 //    custom headers). That lets the CPU engine use several threads: much faster.
 // 2. Keeps a copy of the whole app, so after the first visit it opens with no internet at all.
-const VERSION = 'meetai-v2';
-const SHELL = ['./', 'index.html', 'app.js', 'worker.js', 'audio-processor.js', 'demo.wav', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const VERSION = 'meetai-v3';
+const SHELL = ['./', 'index.html', 'app.js', 'worker.js', 'voice-worker.js', 'acta.js', 'audio-processor.js', 'demo.wav', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
 
 self.addEventListener('install', (e) => {

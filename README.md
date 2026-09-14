@@ -28,6 +28,22 @@ Las reuniones quedan guardadas en ese navegador (desplegable de abajo). El texto
 - **Prueba real**: pulsa *Empezar reunión*, pon un vídeo o un pódcast en español y habla a la vez. El vídeo hace de "los demás".
 - **Transcribir un archivo**: sirve para grabaciones de Teams, notas de voz, vídeos, etc.
 
+## Quién habla
+
+- Tu micrófono es siempre **Yo**. A los demás, la aplicación los separa por la voz: *Persona 1*, *Persona 2*…
+- Pulsa sobre el nombre de una frase para ponerle nombre («Pepe»): cambia en todas sus frases y se recuerda para las próximas reuniones.
+- Si una frase está mal asignada, pulsa su nombre y elige quién la dijo. Si a una misma persona la ha partido en dos, pon el mismo nombre a las dos y se unen.
+- La huella de voz se calcula en el navegador con WeSpeaker (25 MB). Acierta bien con frases de más de 2-3 segundos; con frases muy cortas, voces parecidas o gente hablando a la vez puede equivocarse.
+
+## Acta de la reunión
+
+Al terminar, **📝 Acta (Word)** ofrece dos caminos:
+
+- **Borrador automático**: al momento y sin salir del PC. Datos de la reunión, asistentes, temas, acuerdos y tareas detectados por frases clave («quedamos en», «te encargas tú de…», «antes del jueves»…) y la transcripción completa como anexo. El resumen lo completas tú.
+- **Con Copilot**: la aplicación copia la transcripción con las instrucciones; la pegas en el Copilot de tu empresa, copias su respuesta y la pegas de vuelta. Sale el Word redactado. Ese texto pasa por Microsoft con tu cuenta del trabajo.
+
+Se probó a redactar el acta con una IA pequeña dentro del navegador (Qwen3 0,6B, Gemma 3 1B), pero en un portátil sin tarjeta gráfica o no cargaba o tardaba 12 minutos y no redactaba de verdad; por eso se descartó.
+
 ## Si algo falla
 
 | Problema | Solución |

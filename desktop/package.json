@@ -12,7 +12,8 @@
   "devDependencies": {
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
-    "@huggingface/transformers": "^3.8.1"
+    "@huggingface/transformers": "^3.8.1",
+    "docx": "9.7.1"
   },
   "build": {
     "appId": "es.pgonzalht.meetai",

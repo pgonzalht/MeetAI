@@ -1,5 +1,5 @@
 // Assembles desktop/app/ from the shared web files, pointing them at the copies of the
-// library, the runtime and the voice model that travel inside the executable.
+// libraries and the transcription model that travel inside the executable.
 import { cp, mkdir, rm, readFile, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -19,13 +19,27 @@ html = html.replace(/<link rel="manifest"[^>]*>/, '');
 html = html.replace('<body>', '<body class="desktop">');
 await writeFile(path.join(out, 'index.html'), html);
 
-// worker.js: local library, local runtime, bundled model
-let worker = await readFile(path.join(root, 'worker.js'), 'utf8');
-worker = worker.replace(/^const LIB = .*\/\* BUILD:LIB \*\/$/m, "const LIB = './vendor/transformers.min.js'; /* BUILD:LIB */");
-worker = worker.replace('env.allowLocalModels = false;', "env.allowLocalModels = true;\nenv.localModelPath = '/models/';\nenv.backends.onnx.wasm.wasmPaths = '/vendor/ort/';\nenv.useBrowserCache = false;");
-await writeFile(path.join(out, 'worker.js'), worker);
+async function patch(file, edit) {
+  let code = await readFile(path.join(root, file), 'utf8');
+  code = code.replace(/^const LIB = .*\/\* BUILD:LIB \*\/$/m, "const LIB = './vendor/transformers.min.js'; /* BUILD:LIB */");
+  await writeFile(path.join(out, file), edit(code));
+}
+
+// transcription: the bundled model, never cached a second time
+await patch('worker.js', (code) =>
+  code.replace(
+    'env.allowLocalModels = false;',
+    ['env.allowLocalModels = true;', "env.localModelPath = '/models/';", "env.backends.onnx.wasm.wasmPaths = '/vendor/ort/';", 'env.useBrowserCache = false;'].join('\n')
+  )
+);
+// voiceprints: the model downloads on first use and then stays cached
+for (const f of ['voice-worker.js']) {
+  await patch(f, (code) => code.replace('env.allowLocalModels = false;', "env.allowLocalModels = false;\nenv.backends.onnx.wasm.wasmPaths = '/vendor/ort/';"));
+}
+await patch('acta.js', (code) => code.replace(/^const DOCX = .*\/\* BUILD:DOCX \*\/$/m, "const DOCX = './vendor/docx.mjs'; /* BUILD:DOCX */"));
 
 await cp('node_modules/@huggingface/transformers/dist/transformers.min.js', path.join(out, 'vendor', 'transformers.min.js'));
+await cp('node_modules/docx/dist/index.mjs', path.join(out, 'vendor', 'docx.mjs'));
 for (const f of await readdir('node_modules/onnxruntime-web/dist')) {
   if (f.startsWith('ort-wasm')) await cp(path.join('node_modules/onnxruntime-web/dist', f), path.join(out, 'vendor', 'ort', f));
 }

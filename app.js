@@ -4,7 +4,7 @@ const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 
 // ---------- settings ----------
-const DEFAULTS = { model: 'onnx-community/whisper-small', device: 'auto', me: 'Yo', others: 'Otros', echo: true, micId: '' };
+const DEFAULTS = { model: 'onnx-community/whisper-small', device: 'auto', me: 'Yo', others: 'Otros', echo: true, micId: '', voices: true };
 const settings = { ...DEFAULTS, ...readJSON('meetai.settings', {}) };
 if (params.get('model')) settings.model = params.get('model');
 if (params.get('device')) settings.device = params.get('device');
@@ -22,6 +22,21 @@ function saveSettings() {
   } catch {}
 }
 const nameOf = (src) => (src === 'me' ? settings.me : settings.others) || (src === 'me' ? 'Yo' : 'Otros');
+
+// ---------- who is speaking ----------
+// "Yo" is always the microphone. Everything else arrives mixed in the PC audio, so each phrase
+// gets a voiceprint and phrases with similar voices are grouped as the same person.
+let voiceBook = readJSON('meetai.voices', []); // voices the user named, remembered across meetings
+let voiceFailed = false;
+const saveVoices = () => {
+  try {
+    localStorage.setItem('meetai.voices', JSON.stringify(voiceBook));
+  } catch {}
+};
+const voiceActive = () => settings.voices && !voiceFailed;
+const personOf = (seg, s = seg.session || current) => (seg.person && s?.people?.find((p) => p.id === seg.person)) || null;
+const speakerName = (seg, s) => (seg.src === 'me' ? nameOf('me') : personOf(seg, s)?.name || nameOf('others'));
+const speakerKey = (seg) => (seg.src === 'me' ? 'me' : 'o:' + (seg.person || ''));
 
 // ---------- sessions (saved in this browser) ----------
 let sessions = readJSON('meetai.sessions', []);
@@ -41,7 +56,11 @@ function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const clean = sessions
-      .map((s) => ({ ...s, items: s.items.filter((i) => i.text != null).map(({ audio, session, batch, ...rest }) => rest) }))
+      .map((s) => ({
+        ...s,
+        people: (s.people || []).map((p) => ({ ...p, c: p.c ? Array.from(p.c, (x) => Math.round(x * 1e4) / 1e4) : null })),
+        items: s.items.filter((i) => i.text != null).map(({ audio, session, batch, emb, ...rest }) => rest),
+      }))
       .filter((s) => s.items.length || s === current);
     try {
       localStorage.setItem('meetai.sessions', JSON.stringify(clean));
@@ -119,7 +138,7 @@ function pump() {
   let total = next.dur;
   const later = next.session.items.filter((i) => i.t0 > next.t0).sort((a, b) => a.t0 - b.t0);
   for (const s of later) {
-    if (s.src !== next.src || !queue.includes(s) || total + GAP_MS + s.dur > 28000) break;
+    if (!sameSpeaker(s, next) || !queue.includes(s) || total + GAP_MS + s.dur > 28000) break;
     batch.push(s);
     total += GAP_MS + s.dur;
   }
@@ -141,6 +160,8 @@ function pump() {
   updateStats();
 }
 const GAP_MS = 400;
+// With voice recognition on, phrases only travel together once both are known to be the same person.
+const sameSpeaker = (a, b) => a.src === b.src && (a.src === 'me' || !voiceActive() || (!!a.person && a.person === b.person));
 
 function finishSegment(seg, m) {
   for (const s of seg.batch || []) {
@@ -169,6 +190,231 @@ function finishSegment(seg, m) {
   save();
   updateStats();
   maybeAutotestDone();
+}
+
+// ---------- voiceprints ----------
+let voiceWorker = null;
+
+function startVoice() {
+  if (!settings.voices || voiceWorker) return;
+  voiceFailed = false;
+  voiceWorker = new Worker('voice-worker.js', { type: 'module' });
+  voiceWorker.onmessage = onVoice;
+  voiceWorker.onerror = () => voiceUnavailable();
+  voiceWorker.postMessage({ type: 'load' });
+  for (const seg of segById.values()) if (seg.src === 'others' && seg.audio && !seg.person) requestVoiceprint(seg);
+}
+function stopVoice() {
+  voiceWorker?.terminate();
+  voiceWorker = null;
+  pump();
+}
+// Without voiceprints everyone in the PC audio is simply "Otros", as before.
+function voiceUnavailable() {
+  voiceFailed = true;
+  voiceWorker?.terminate();
+  voiceWorker = null;
+  pump();
+  maybeAutotestDone();
+}
+function requestVoiceprint(seg) {
+  if (!voiceWorker || !seg.audio) return;
+  const audio = seg.audio.slice();
+  voiceWorker.postMessage({ type: 'embed', id: seg.id, audio }, [audio.buffer]);
+}
+function onVoice({ data: m }) {
+  if (m.type === 'voice-fatal') return voiceUnavailable();
+  if (m.type !== 'embedding') return;
+  const seg = segById.get(m.id);
+  if (!seg) return;
+  seg.voiceDone = true;
+  if (m.emb && !seg.manual) {
+    seg.emb = m.emb;
+    assignPerson(seg);
+  }
+  upsertRow(seg);
+  save();
+  pump();
+  maybeAutotestDone();
+}
+
+const dot = (a, b) => {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+};
+// Weighted average of two voiceprints, kept at unit length.
+function blend(a, wa, b, wb) {
+  if (!a) return b ? Float32Array.from(b) : null;
+  if (!b) return Float32Array.from(a);
+  const out = new Float32Array(a.length);
+  let n = 0;
+  for (let i = 0; i < a.length; i++) {
+    out[i] = a[i] * wa + b[i] * wb;
+    n += out[i] * out[i];
+  }
+  n = Math.sqrt(n) || 1;
+  for (let i = 0; i < out.length; i++) out[i] /= n;
+  return out;
+}
+function newPerson(s, name, c) {
+  s.people ||= [];
+  s.personCounter = (s.personCounter || 0) + 1;
+  const num = s.personCounter;
+  const p = { id: 'p' + num, num, name: name || `Persona ${num}`, named: !!name, c: c ? Float32Array.from(c) : null, n: c ? 1 : 0 };
+  s.people.push(p);
+  return p;
+}
+
+// Thresholds measured with WeSpeaker: the same voice scores about 0.9 on phrases of several
+// seconds and 0.6-0.8 on 1-2 s ones; different voices score about 0.3-0.45.
+function assignPerson(seg) {
+  const s = seg.session;
+  s.people ||= [];
+  const long = seg.dur >= 2500;
+  let best = null;
+  let bestSim = -1;
+  for (const p of s.people) {
+    if (!p.c) continue;
+    const sim = dot(seg.emb, p.c);
+    if (sim > bestSim) [best, bestSim] = [p, sim];
+  }
+  if (best && bestSim >= (long ? 0.6 : 0.45)) return joinPerson(seg, best, true);
+  // a voice the user named in an earlier meeting?
+  let known = null;
+  let knownSim = -1;
+  for (const v of voiceBook) {
+    if (s.people.some((p) => p.name.toLowerCase() === v.name.toLowerCase())) continue;
+    const sim = dot(seg.emb, v.c);
+    if (sim > knownSim) [known, knownSim] = [v, sim];
+  }
+  if (known && knownSim >= 0.65 && seg.dur >= 1500) return joinPerson(seg, newPerson(s, known.name, known.c), true);
+  // too short to tell a new voice apart: stay with the closest one, without learning from it
+  if (!long && best) return joinPerson(seg, best, false);
+  joinPerson(seg, newPerson(s, null, seg.emb), false);
+}
+function joinPerson(seg, p, learn) {
+  seg.person = p.id;
+  if (learn && seg.emb) {
+    p.c = blend(p.c, Math.min(p.n, 20), seg.emb, 1);
+    p.n++;
+  }
+}
+
+function rememberVoice(p) {
+  if (!p?.named || !p.c) return;
+  const v = voiceBook.find((x) => x.name.toLowerCase() === p.name.toLowerCase());
+  if (v) {
+    v.c = Array.from(blend(v.c, Math.min(v.n, 20), p.c, Math.min(p.n, 20)), (x) => Math.round(x * 1e4) / 1e4);
+    v.n = Math.min(v.n + p.n, 50);
+  } else {
+    voiceBook.push({ name: p.name, c: Array.from(p.c, (x) => Math.round(x * 1e4) / 1e4), n: p.n });
+  }
+  saveVoices();
+  renderVoiceBook();
+}
+function refreshRows() {
+  for (const seg of rowEl.keys()) fillRow(seg);
+  updateContinuation();
+  save();
+}
+
+function renameSpeaker(seg, s, name) {
+  name = name.trim();
+  if (!name) return;
+  if (seg.src === 'me') {
+    settings.me = name;
+    $('#set-me').value = name;
+    saveSettings();
+    applyNames();
+    return refreshRows();
+  }
+  let p = personOf(seg, s);
+  if (!p) {
+    p = newPerson(s, null, seg.emb);
+    seg.person = p.id;
+  }
+  // giving a group the name of another group means they were the same person all along
+  const twin = s.people.find((x) => x !== p && x.name.toLowerCase() === name.toLowerCase());
+  if (twin) {
+    for (const it of s.items) if (it.person === p.id) it.person = twin.id;
+    twin.c = blend(twin.c, Math.max(twin.n, 1), p.c, Math.max(p.n, 1));
+    twin.n += p.n;
+    s.people.splice(s.people.indexOf(p), 1);
+    p = twin;
+  } else {
+    p.name = name;
+  }
+  p.named = true;
+  rememberVoice(p);
+  refreshRows();
+}
+
+function moveToPerson(seg, s, target) {
+  const from = personOf(seg, s);
+  seg.person = target.id;
+  seg.manual = true;
+  // a correction is strong evidence about how this person sounds
+  if (seg.emb) {
+    target.c = blend(target.c, Math.min(target.n, 20), seg.emb, 3);
+    target.n++;
+  }
+  if (from && from !== target && !s.items.some((i) => i.person === from.id)) s.people.splice(s.people.indexOf(from), 1);
+  rememberVoice(target);
+  refreshRows();
+}
+
+function openSpeakerMenu(seg, anchor) {
+  const s = seg.session || current;
+  const menu = $('#speaker-menu');
+  menu.textContent = '';
+  const el = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+  const person = personOf(seg, s);
+  const name = speakerName(seg, s);
+
+  menu.append(el('div', { className: 'menu-label', textContent: seg.src === 'me' ? 'Tu nombre' : `Nombre de «${name}» en toda la reunión` }));
+  const form = el('form');
+  const input = el('input', { type: 'text', maxLength: 30, value: name });
+  form.append(input, el('button', { type: 'submit', className: 'small primary', textContent: 'Guardar' }));
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    menu.hidden = true;
+    renameSpeaker(seg, s, input.value);
+  };
+  menu.append(form);
+
+  if (seg.src === 'others') {
+    menu.append(el('div', { className: 'menu-label', textContent: 'Esta frase la dijo otra persona:' }));
+    const box = el('div', { className: 'menu-people' });
+    for (const p of s.people || []) {
+      if (p === person) continue;
+      const b = el('button', { type: 'button', className: 'small', textContent: p.name });
+      b.onclick = () => {
+        menu.hidden = true;
+        moveToPerson(seg, s, p);
+      };
+      box.append(b);
+    }
+    const add = el('button', { type: 'button', className: 'small', textContent: '+ Persona nueva' });
+    add.onclick = () => {
+      menu.hidden = true;
+      moveToPerson(seg, s, newPerson(s, null, null));
+    };
+    box.append(add);
+    menu.append(box);
+  }
+
+  const r = anchor.getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + window.scrollX + 'px';
+  menu.style.top = r.bottom + window.scrollY + 6 + 'px';
+  input.focus();
+  input.select();
+}
+
+function renderVoiceBook() {
+  const el = $('#voices-count');
+  if (el) el.textContent = voiceBook.length ? voiceBook.map((v) => v.name).join(', ') : 'Ninguna todavía.';
 }
 
 // Whisper sometimes "hears" these stock phrases in noise; they never belong to a meeting.
@@ -282,6 +528,7 @@ function addSegment(src, t0, dur, audio) {
   segById.set(seg.id, seg);
   current.items.push(seg);
   queue.push(seg);
+  if (src === 'others') requestVoiceprint(seg);
   upsertRow(seg);
   pump();
   updateStats();
@@ -429,6 +676,7 @@ function finalizeRecording(rec) {
   });
   recording = null;
   current.end = Date.now();
+  for (const p of current.people || []) rememberVoice(p);
   save();
   $('#btn-stop').disabled = false;
   $('#btn-stop').textContent = '■ Parar';
@@ -540,6 +788,9 @@ function makeRow(seg) {
     seg.text = text.textContent;
     save();
   });
+  meta.addEventListener('click', (e) => {
+    if (e.target.classList.contains('who') && seg.text != null) openSpeakerMenu(seg, e.target);
+  });
   row.append(meta, text);
   rowEl.set(seg, row);
   fillRow(seg);
@@ -550,10 +801,11 @@ function fillRow(seg) {
   const row = rowEl.get(seg);
   const [meta, text] = row.children;
   const status = seg.text == null ? 'pending' : '';
-  row.className = `row ${seg.src} ${status} ${seg.echo ? 'echo' : ''} ${seg.error ? 'errored' : ''}`;
+  const person = seg.src === 'others' ? personOf(seg) : null;
+  row.className = `row ${seg.src} ${person ? 'c' + ((person.num - 1) % 6) : ''} ${status} ${seg.echo ? 'echo' : ''} ${seg.error ? 'errored' : ''}`;
   row.dataset.t0 = seg.t0;
-  meta.innerHTML = `<span class="who"></span> <span class="time"></span>`;
-  meta.firstChild.textContent = nameOf(seg.src);
+  meta.innerHTML = `<span class="who" title="Cambiar quién habla"></span> <span class="time"></span>`;
+  meta.firstChild.textContent = speakerName(seg);
   meta.lastChild.textContent = fmtTime(seg.t0);
   if (seg.text == null) {
     text.textContent = seg.status === 'working' ? 'transcribiendo…' : 'en cola…';
@@ -590,7 +842,7 @@ function updateContinuation() {
   let prev = null;
   for (const [seg, row] of [...rowEl].sort((a, b) => a[0].t0 - b[0].t0)) {
     if (seg.echo) continue;
-    row.classList.toggle('cont', !!prev && prev.src === seg.src && seg.t0 - (prev.t0 + prev.dur) < 20000);
+    row.classList.toggle('cont', !!prev && speakerKey(prev) === speakerKey(seg) && seg.t0 - (prev.t0 + prev.dur) < 20000);
     prev = seg;
   }
 }
@@ -662,6 +914,7 @@ function setRecordingUI(on) {
   $('#history').disabled = on;
   $('#btn-delete').disabled = on;
   $('#set-model').disabled = $('#set-device').disabled = on;
+  $('#btn-acta').disabled = on;
   updateStats();
 }
 
@@ -707,22 +960,102 @@ async function listMics() {
 }
 
 // ---------- export ----------
-function exportText(s) {
-  const lines = [];
+// Consecutive phrases from the same person within 20 s read as one turn.
+function turns(s) {
+  const out = [];
   let prev = null;
   for (const it of [...s.items].sort((a, b) => a.t0 - b.t0)) {
     if (it.text == null || it.echo || !it.text.trim()) continue;
-    if (prev && prev.src === it.src && it.t0 - (prev.t0 + prev.dur) < 20000) {
-      lines[lines.length - 1] += ' ' + it.text.trim();
+    if (prev && speakerKey(prev) === speakerKey(it) && it.t0 - (prev.t0 + prev.dur) < 20000) {
+      out[out.length - 1].text += ' ' + it.text.trim();
     } else {
-      lines.push(`[${fmtTimeFor(s, it.t0)}] ${nameOf(it.src)}: ${it.text.trim()}`);
+      out.push({ time: fmtTimeFor(s, it.t0), who: speakerName(it, s), text: it.text.trim() });
     }
     prev = it;
   }
+  return out;
+}
+function exportText(s) {
   const d = new Date(s.start);
   const head = `${s.title} — ${d.toLocaleDateString('es-ES')} ${d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` + (s.end ? ` (${fmtDuration(s.end - s.start)})` : '');
-  return head + '\n\n' + lines.join('\n\n') + '\n';
+  return head + '\n\n' + turns(s).map((t) => `[${t.time}] ${t.who}: ${t.text}`).join('\n\n') + '\n';
 }
+function stamp(s) {
+  const d = new Date(s.start);
+  const two = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}${two(d.getMinutes())}`;
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- minutes (acta) ----------
+// Two ways to fill in the minutes: a draft spotted automatically in the transcript, or the
+// minutes the company's Copilot writes from instructions prepared here (see acta.js).
+function openActa(s) {
+  if (!s) return;
+  if (!s.items.some((i) => i.text)) return notice('warn', 'Todavía no hay nada transcrito para hacer el acta.');
+  if (recording || s.items.some((i) => i.text == null)) return notice('warn', 'Espera a que termine la transcripción para hacer el acta.');
+  const dialog = $('#acta-dialog');
+  dialog.dataset.session = s.id;
+  $('#acta-paste').value = s.acta?.source === 'copilot' ? s.acta.text : '';
+  // Copilot's chat box has a size limit; past it, the transcript goes as an attached file
+  $('#acta-long').hidden = exportText(s).length < 12000;
+  dialog.showModal();
+}
+
+async function actaDocx(s, source) {
+  try {
+    const A = await import('./acta.js');
+    const t = turns(s);
+    const auto = A.detectActa(t);
+    let acta = auto;
+    if (source === 'copilot') {
+      const pasted = A.parseActa(s.acta.text);
+      // whatever Copilot left out is filled with what was detected automatically
+      acta = {
+        ...pasted,
+        acuerdos: pasted.acuerdos.length ? pasted.acuerdos : auto.acuerdos,
+        tareas: pasted.tareas.length ? pasted.tareas : auto.tareas,
+        proxima: pasted.proxima || auto.proxima,
+      };
+    }
+    const d = new Date(s.start);
+    const blob = await A.buildDocx({
+      source,
+      title: s.title,
+      date: d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      start: s.kind === 'live' ? d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '—',
+      duration: s.end ? fmtDuration(s.end - s.start) : '—',
+      attendees: [...new Set(t.map((x) => x.who))],
+      acta,
+      turns: t,
+    });
+    log('acta', { source, bytes: blob.size, acta });
+    if (!params.has('autotest')) downloadBlob(blob, `acta_${stamp(s)}.docx`);
+    notice(
+      'info',
+      source === 'copilot'
+        ? 'Acta descargada con el texto de Copilot. Revísala antes de enviarla.'
+        : 'Borrador del acta descargado: completa el resumen y revisa temas, acuerdos y tareas, que se han detectado automáticamente.'
+    );
+  } catch (e) {
+    console.error(e);
+    log('acta-error', String(e?.message || e));
+    notice('error', 'No se pudo crear el acta: ' + (e?.message || e));
+  }
+}
+
+function flash(button, text) {
+  const before = button.textContent;
+  button.textContent = text;
+  setTimeout(() => (button.textContent = before), 2000);
+}
+
 function fmtTimeFor(s, t) {
   const keep = current;
   current = s;
@@ -735,10 +1068,28 @@ function fmtTimeFor(s, t) {
 function log(kind, data) {
   if (params.has('autotest')) console.log('MEETAI ' + kind + ' ' + JSON.stringify(data));
 }
+let autotestDone = false;
 function maybeAutotestDone() {
-  if (!params.has('autotest') || recording || !current || current.kind !== 'demo') return;
+  if (autotestDone || !params.has('autotest') || recording || !current || !['demo', 'file'].includes(current.kind)) return;
   if (current.items.some((i) => i.text == null)) return;
-  log('done', { engine, rtf: +(procAudioMs / procMs).toFixed(2), text: exportText(current) });
+  if (voiceActive() && current.items.some((i) => i.src === 'others' && !i.voiceDone && !i.person)) return;
+  autotestDone = true;
+  log('done', { engine, rtf: +(procAudioMs / procMs).toFixed(2), people: (current.people || []).map((p) => p.name), text: exportText(current) });
+  if (params.get('acta') === 'copilot') {
+    fetch(params.get('paste'))
+      .then((r) => r.text())
+      .then((text) => {
+        current.acta = { text, source: 'copilot', at: Date.now() };
+        actaDocx(current, 'copilot');
+      });
+  } else if (params.has('acta')) {
+    actaDocx(current, 'auto');
+  }
+}
+
+function applyNames() {
+  document.querySelectorAll('.name-me').forEach((e) => (e.textContent = nameOf('me')));
+  document.querySelectorAll('.name-others').forEach((e) => (e.textContent = nameOf('others')));
 }
 
 // ---------- wire up ----------
@@ -748,11 +1099,9 @@ function init() {
   $('#set-me').value = settings.me;
   $('#set-others').value = settings.others;
   $('#set-echo').checked = settings.echo;
-  const applyNames = () => {
-    document.querySelectorAll('.name-me').forEach((e) => (e.textContent = nameOf('me')));
-    document.querySelectorAll('.name-others').forEach((e) => (e.textContent = nameOf('others')));
-  };
+  $('#set-voices').checked = settings.voices;
   applyNames();
+  renderVoiceBook();
 
   $('#set-model').onchange = $('#set-device').onchange = () => {
     settings.model = $('#set-model').value;
@@ -771,6 +1120,56 @@ function init() {
     settings.echo = $('#set-echo').checked;
     saveSettings();
   };
+  $('#set-voices').onchange = () => {
+    settings.voices = $('#set-voices').checked;
+    saveSettings();
+    if (settings.voices) startVoice();
+    else stopVoice();
+  };
+  $('#btn-forget-voices').onclick = () => {
+    if (!voiceBook.length || !confirm('¿Olvidar las voces guardadas? En las próximas reuniones tendrás que volver a poner los nombres.')) return;
+    voiceBook = [];
+    saveVoices();
+    renderVoiceBook();
+  };
+  $('#btn-acta').onclick = () => openActa(current);
+  const actaSession = () => sessions.find((x) => x.id === $('#acta-dialog').dataset.session);
+  $('#acta-auto').onclick = () => {
+    $('#acta-dialog').close();
+    actaDocx(actaSession(), 'auto');
+  };
+  $('#acta-copy').onclick = async (e) => {
+    const A = await import('./acta.js');
+    await navigator.clipboard.writeText(A.copilotPrompt(exportText(actaSession())));
+    flash(e.currentTarget, '✓ Copiado: pégalo en Copilot');
+  };
+  $('#acta-copy-short').onclick = async (e) => {
+    e.preventDefault();
+    const A = await import('./acta.js');
+    await navigator.clipboard.writeText(A.copilotInstructions());
+    flash(e.currentTarget, '✓ instrucciones copiadas');
+  };
+  $('#acta-txt').onclick = (e) => {
+    e.preventDefault();
+    const s = actaSession();
+    downloadBlob(new Blob([exportText(s)], { type: 'text/plain;charset=utf-8' }), `reunion_${stamp(s)}.txt`);
+  };
+  $('#acta-make').onclick = () => {
+    const text = $('#acta-paste').value.trim();
+    if (!text) return $('#acta-paste').focus();
+    const s = actaSession();
+    s.acta = { text, source: 'copilot', at: Date.now() };
+    save();
+    $('#acta-dialog').close();
+    actaDocx(s, 'copilot');
+  };
+  document.addEventListener('mousedown', (e) => {
+    const menu = $('#speaker-menu');
+    if (!menu.hidden && !menu.contains(e.target) && !e.target.classList.contains('who')) menu.hidden = true;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('#speaker-menu').hidden = true;
+  });
   $('#mic').onchange = () => {
     settings.micId = $('#mic').value;
     saveSettings();
@@ -794,13 +1193,7 @@ function init() {
   };
   $('#btn-download').onclick = () => {
     if (!current?.items.length) return;
-    const a = document.createElement('a');
-    const d = new Date(current.start);
-    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-    a.href = URL.createObjectURL(new Blob([exportText(current)], { type: 'text/plain;charset=utf-8' }));
-    a.download = `reunion_${stamp}.txt`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    downloadBlob(new Blob([exportText(current)], { type: 'text/plain;charset=utf-8' }), `reunion_${stamp(current)}.txt`);
   };
   $('#history').onchange = () => {
     current = sessions.find((s) => s.id === $('#history').value) || current;
@@ -828,12 +1221,23 @@ function init() {
   requestAnimationFrame(meters);
   listMics();
   startWorker();
+  startVoice();
 
   if (!navigator.mediaDevices?.getDisplayMedia) {
     notice('error', 'Este navegador no permite captar el audio de la reunión. Abre la página en Microsoft Edge o Google Chrome.');
   }
   if (params.get('autotest') === 'demo') {
     const go = () => (engine ? startDemo() : setTimeout(go, 500));
+    go();
+  }
+  // ?autotest=file&src=demo.wav: a file with every voice mixed together, like a Teams recording
+  if (params.get('autotest') === 'file') {
+    const go = async () => {
+      if (!engine) return setTimeout(go, 500);
+      const src = params.get('src') || 'demo.wav';
+      const blob = await (await fetch(src)).blob();
+      transcribeFile(new File([blob], src));
+    };
     go();
   }
 }

@@ -24,6 +24,8 @@
     --accent: #2456d6; --accent-ink: #ffffff; --me: #2456d6; --me-bg: #eaf0ff;
     --others: #b85c00; --others-bg: #fff2e4; --warn-bg: #fff6d6; --warn-ink: #6b5200;
     --err-bg: #ffe3e3; --err-ink: #8a1c1c; --ok: #1f8a4c; --rec: #d42a2a;
+    --p1: #0f766e; --p1-bg: #dff3f1; --p2: #7c3aed; --p2-bg: #efe7fd; --p3: #be185d; --p3-bg: #fce7f1;
+    --p4: #3f7d20; --p4-bg: #e6f2de; --p5: #8a5a2b; --p5-bg: #f3e9df;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -31,6 +33,8 @@
       --accent: #6f9bff; --accent-ink: #0d1320; --me: #8fb0ff; --me-bg: #1d2a45;
       --others: #ffb26b; --others-bg: #3a2a18; --warn-bg: #3a3212; --warn-ink: #f3dc85;
       --err-bg: #431d1d; --err-ink: #ffb4b4; --ok: #5fd08e; --rec: #ff6161;
+      --p1: #5eead4; --p1-bg: #12332f; --p2: #c4a8ff; --p2-bg: #2a2140; --p3: #f9a8d4; --p3-bg: #3b1d2c;
+      --p4: #a3d977; --p4-bg: #1f2e17; --p5: #e0b98c; --p5-bg: #33281c;
     }
   }
   * { box-sizing: border-box; }
@@ -91,6 +95,29 @@
   .who { display: inline-block; font-weight: 600; font-size: 12px; padding: 1px 8px; border-radius: 6px; margin-right: 4px; }
   .me .who { color: var(--me); background: var(--me-bg); }
   .others .who { color: var(--others); background: var(--others-bg); }
+  .others.c1 .who { color: var(--p1); background: var(--p1-bg); }
+  .others.c2 .who { color: var(--p2); background: var(--p2-bg); }
+  .others.c3 .who { color: var(--p3); background: var(--p3-bg); }
+  .others.c4 .who { color: var(--p4); background: var(--p4-bg); }
+  .others.c5 .who { color: var(--p5); background: var(--p5-bg); }
+  .who { cursor: pointer; }
+  .who:hover { box-shadow: 0 0 0 2px currentColor; }
+  #speaker-menu { position: absolute; z-index: 30; width: 300px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.2); padding: 8px 12px 12px; }
+  #speaker-menu .menu-label { font-size: 12px; color: var(--muted); margin: 8px 0 5px; }
+  #speaker-menu form { display: flex; gap: 6px; }
+  #speaker-menu input { flex: 1; min-width: 0; font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  #speaker-menu .menu-people { display: flex; flex-wrap: wrap; gap: 6px; }
+  #acta-dialog { width: min(640px, calc(100vw - 24px)); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px 16px; background: var(--panel); color: var(--ink); }
+  #acta-dialog::backdrop { background: rgba(0,0,0,.45); }
+  .acta-head { display: flex; justify-content: space-between; align-items: center; margin: 0 0 4px; font-size: 16px; }
+  .acta-opt { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 12px; margin: 10px 0; }
+  .acta-opt h3 { margin: 2px 0 4px; font-size: 15px; }
+  .acta-opt p { margin: 0 0 10px; }
+  .acta-steps { padding-left: 20px; margin: 6px 0 10px; }
+  .acta-steps li { margin: 8px 0; }
+  #acta-paste { display: block; width: 100%; margin-top: 6px; font: 13px/1.4 ui-monospace, Consolas, monospace; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); resize: vertical; }
+  a.btn { text-decoration: none; }
+  #acta-dialog a:not(.btn) { color: var(--accent); }
   .text { outline: none; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .text:focus { background: var(--bg); box-shadow: 0 0 0 2px var(--bg); }
   .pending .text { color: var(--muted); font-style: italic; }
@@ -177,6 +204,10 @@
       <input id="set-others" type="text" maxlength="30">
       <label for="set-echo">Quitar eco</label>
       <label class="hint"><input id="set-echo" type="checkbox"> Si usas altavoces en vez de cascos, tu micrófono también oye a los demás. Esto oculta esas frases repetidas.</label>
+      <label for="set-voices">Reconocer voces</label>
+      <label class="hint"><input id="set-voices" type="checkbox"> Distingue a las personas del audio del PC (Persona 1, Persona 2…). Pulsa sobre el nombre de una frase para ponérselo: se aplica a todas sus frases y se recuerda para las próximas reuniones.</label>
+      <span>Voces guardadas</span>
+      <div><span id="voices-count" class="hint"></span> <button id="btn-forget-voices" class="small" type="button">Olvidar voces</button></div>
     </div>
   </details>
 
@@ -196,6 +227,20 @@
       <li>En Edge: menú <b>…</b> → <b>Aplicaciones</b> → <b>Instalar este sitio como una aplicación</b>. Queda con su icono en el menú de inicio y se abre en su propia ventana, sin barra de navegador.</li>
       <li><b>Después de la primera vez funciona sin internet</b>: la aplicación y el modelo de voz se quedan guardados en tu PC.</li>
     </ul>
+    <h3>Quién habla</h3>
+    <ul>
+      <li>Tu micrófono es siempre <b>Yo</b>. Al resto, la aplicación los separa por la voz: <b>Persona 1</b>, <b>Persona 2</b>…</li>
+      <li>Pulsa sobre el nombre de cualquier frase para <b>ponerle nombre</b> («Pepe»): cambia en todas sus frases y en las siguientes reuniones lo reconocerá solo.</li>
+      <li>Si una frase está mal asignada, pulsa su nombre y elige quién la dijo. Si a una misma persona la ha partido en dos, pon el mismo nombre a las dos y se unen.</li>
+      <li>Acierta bien con frases de más de 2-3 segundos; con frases muy cortas, voces parecidas o gente hablando a la vez puede equivocarse.</li>
+    </ul>
+    <h3>Acta de la reunión</h3>
+    <ul>
+      <li>Al terminar, pulsa <b>📝 Acta (Word)</b> y elige:</li>
+      <li><b>Borrador automático</b>: al momento y sin salir de tu PC. Rellena datos, asistentes, temas, acuerdos y tareas que detecta por frases clave, con la transcripción como anexo. El resumen lo escribes tú.</li>
+      <li><b>Con Copilot</b>: copia la transcripción con las instrucciones, pégala en el Copilot de tu empresa, copia su respuesta y pégala en la aplicación. Sale el Word bien redactado. Ese texto pasa por Microsoft con tu cuenta del trabajo.</li>
+      <li>Revisa siempre el acta antes de enviarla.</li>
+    </ul>
     <h3>Probar sin reunión</h3>
     <ul>
       <li><b>Probar con una conversación de ejemplo</b>: reproduce un diálogo grabado con dos voces y lo transcribe como si fuera una reunión.</li>
@@ -213,12 +258,33 @@
 
 <div class="bar"><div class="inner">
   <div class="stats" id="stats">Sin reunión en curso.</div>
+  <button id="btn-acta" class="small primary" title="Acta en Word: borrador automático o redactada con Copilot">📝 Acta (Word)</button>
   <button id="btn-copy" class="small">📋 Copiar</button>
   <button id="btn-download" class="small">⬇️ Descargar .txt</button>
   <select id="history" title="Reuniones guardadas en este navegador"></select>
   <button id="btn-delete" class="small" title="Borrar esta reunión">🗑️</button>
 </div></div>
 
+<dialog id="acta-dialog">
+  <form method="dialog" class="acta-head"><b>📝 Acta de la reunión</b><button class="small" value="close" aria-label="Cerrar">✕</button></form>
+  <div class="acta-opt">
+    <h3>Borrador automático</h3>
+    <p class="hint">Al momento y sin salir de tu PC: datos de la reunión, asistentes, temas, acuerdos y tareas detectados por frases clave, y la transcripción completa. El resumen lo completas tú.</p>
+    <button id="acta-auto" class="primary">⬇️ Descargar borrador en Word</button>
+  </div>
+  <div class="acta-opt">
+    <h3>Redactada con Copilot</h3>
+    <ol class="acta-steps">
+      <li><button id="acta-copy">📋 Copiar transcripción e instrucciones</button>
+        <div id="acta-long" class="hint" hidden>Es una reunión larga: si Copilot corta el texto, <a href="#" id="acta-txt">descarga la transcripción</a>, adjúntala en Copilot y <a href="#" id="acta-copy-short">copia solo las instrucciones</a>.</div></li>
+      <li><a class="btn" href="https://m365.cloud.microsoft/chat" target="_blank" rel="noopener">Abrir Copilot ↗</a> y pega con <kbd>Ctrl</kbd>+<kbd>V</kbd>.</li>
+      <li>Copia la respuesta de Copilot y pégala aquí:<textarea id="acta-paste" rows="7" placeholder="## Resumen&#10;…"></textarea></li>
+    </ol>
+    <button id="acta-make" class="primary">⬇️ Crear Word con la respuesta</button>
+  </div>
+  <p class="hint">Lo que pegues en Copilot pasa por Microsoft con tu cuenta del trabajo. El borrador automático no sale de tu PC.</p>
+</dialog>
+<div id="speaker-menu" hidden></div>
 <script type="module" src="app.js"></script>
 </body>
 </html>
