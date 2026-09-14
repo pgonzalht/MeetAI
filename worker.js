@@ -106,8 +106,9 @@ async function handle(m) {
   } else if (m.type === 'transcribe') {
     const t = performance.now();
     try {
-      const out = await asr(m.audio, GEN);
-      postMessage({ type: 'result', id: m.id, text: (out.text || '').trim(), ms: performance.now() - t });
+      // several phrases in one pass come back with timestamps, so the app can give each its words
+      const out = await asr(m.audio, m.timestamps ? { ...GEN, return_timestamps: true } : GEN);
+      postMessage({ type: 'result', id: m.id, text: (out.text || '').trim(), chunks: out.chunks || null, ms: performance.now() - t });
     } catch (err) {
       postMessage({ type: 'result', id: m.id, text: '', error: String(err?.message || err), ms: performance.now() - t });
     }

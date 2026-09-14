@@ -49,8 +49,9 @@ Se probó a redactar el acta con una IA pequeña dentro del navegador (Qwen3 0,6
 | Problema | Solución |
 |---|---|
 | No aparece nada de "Otros" | Al compartir no se activó el audio del sistema. Pulsa *Compartir audio de la reunión* y activa la casilla de audio. |
+| Te silencias en Teams y sigue transcribiendo lo que dices | MeetAI no puede saber si estás silenciado en Teams. Pulsa **🔇 Silenciar** en la tarjeta «Yo» mientras lo estés; se quita solo al terminar la reunión. |
 | Oyes Teams por unos cascos y no se capta | Pon esos cascos como salida predeterminada de Windows. |
-| El contador "pendiente" crece sin parar | El PC no da abasto. No se pierde nada, pero puedes elegir un modelo más rápido en *Ajustes*. |
+| El contador "pendiente" crece sin parar | El PC no da abasto. No se pierde nada: cuando se acumulan frases, se transcriben juntas y se recupera el retraso. Si aun así no alcanza, elige un modelo más rápido en *Ajustes*. |
 | "No se pudo cargar el modelo" | La red de la empresa puede estar bloqueando `huggingface.co` o `cdn.jsdelivr.net`. |
 
 ## La aplicación de escritorio (Windows)

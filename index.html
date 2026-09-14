@@ -75,6 +75,8 @@
   .meter { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
   .meter i { display: block; height: 100%; width: 0; transition: width .08s; }
   #card-me .meter i { background: var(--me); }
+  #btn-mute.muted { background: var(--rec); color: #fff; border-color: var(--rec); }
+  #card-me.muted { border-color: var(--rec); }
   #card-others .meter i { background: var(--others); }
   .card select { font: inherit; font-size: 12px; max-width: 60%; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
 
@@ -163,7 +165,7 @@
 
   <div class="sources">
     <div class="card" id="card-me">
-      <div class="top"><b>🎤 <span class="name-me">Yo</span> — micrófono</b><select id="mic" title="Micrófono"><option value="">Micrófono predeterminado</option></select></div>
+      <div class="top"><b>🎤 <span class="name-me">Yo</span> — micrófono</b><select id="mic" title="Micrófono"><option value="">Micrófono predeterminado</option></select><button id="btn-mute" class="small" type="button" title="Silencia tu micrófono solo en MeetAI: la aplicación no puede saber si estás silenciado en Teams">🔇 Silenciar</button></div>
       <div class="meter"><i id="meter-me"></i></div>
       <div class="state" id="state-me">Inactivo</div>
     </div>
@@ -251,7 +253,7 @@
       <li class="web-only"><b>No aparece nada de "Otros"</b>: al compartir no marcaste el audio del sistema. Pulsa <b>Compartir audio de la reunión</b> y activa la casilla de audio.</li>
       <li><b>Oyes Teams por unos cascos y no se capta</b>: pon esos cascos como dispositivo de salida predeterminado de Windows (icono del altavoz de la barra de tareas).</li>
       <li><b>El contador "pendiente" no para de crecer</b>: tu PC no llega a tiempo. No se pierde nada (acabará de transcribir después), pero puedes elegir un modelo más rápido en Ajustes.</li>
-      <li>Lo que digas con el micrófono silenciado en Teams también se transcribe aquí.</li>
+      <li>MeetAI no sabe si te has silenciado en Teams: lo que digas se sigue transcribiendo. Pulsa <b>🔇 Silenciar</b> en la tarjeta «Yo» mientras estés silenciado.</li>
     </ul>
   </details>
 </div>
