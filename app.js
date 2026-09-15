@@ -158,7 +158,7 @@ function onRefiner({ data: m }) {
     if (engine) modelStatus('ready', readyText());
     pumpRefine();
   } else if (m.type === 'progress') {
-    if (engine) modelStatus('ready', `${readyText()} · descargando el modelo preciso (solo la primera vez): ${Math.round(m.loaded / 1048576)} / ${Math.round(m.total / 1048576)} MB`);
+    if (engine) modelStatus('ready', `${readyText()} · cargando el modelo preciso: ${Math.round(m.loaded / 1048576)} / ${Math.round(m.total / 1048576)} MB`);
   } else if (m.type === 'fatal') {
     log('warn', { refiner: m.message });
     refiner?.terminate();
@@ -175,7 +175,8 @@ function onRefiner({ data: m }) {
 function onWorker({ data: m }) {
   if (m.type === 'progress') {
     const mb = (n) => Math.round(n / 1048576);
-    modelStatus('loading', `Descargando modelo (solo la primera vez): ${mb(m.loaded)} / ${mb(m.total)} MB`, m.loaded / m.total);
+    // the library reports this progress both when downloading (first time) and when reading from disk
+    modelStatus('loading', `Cargando modelo de voz: ${mb(m.loaded)} / ${mb(m.total)} MB (solo se descarga la primera vez)`, m.loaded / m.total);
   } else if (m.type === 'status') {
     modelStatus('loading', m.message);
   } else if (m.type === 'warn') {
