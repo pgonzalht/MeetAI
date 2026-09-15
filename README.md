@@ -52,7 +52,7 @@ Se probó a redactar el acta con una IA pequeña dentro del navegador (Qwen3 0,6
 | No aparece nada de "Otros" | Al compartir no se activó el audio del sistema. Pulsa *Compartir audio de la reunión* y activa la casilla de audio. |
 | Te silencias en Teams y sigue transcribiendo lo que dices | MeetAI no puede saber si estás silenciado en Teams. Pulsa **🔇 Silenciar** en la tarjeta «Yo» mientras lo estés; se quita solo al terminar la reunión. |
 | Oyes Teams por unos cascos y no se capta | Pon esos cascos como salida predeterminada de Windows. |
-| El texto sale en gris | Es provisional: lo escribe al momento el modelo rápido y el preciso lo reescribe en cuanto el PC tiene hueco (pasa a color normal). En *Ajustes → Velocidad y precisión* puedes usar solo uno de los dos. |
+| El texto sale en gris | Es provisional: lo escribe al momento el modelo rápido y el preciso lo reescribe en cuanto el PC tiene hueco (pasa a color normal). En *Ajustes → Velocidad y precisión* puedes usar solo uno de los dos; durante una reunión se cambia poniéndola en **⏸ Pausa**. |
 | "No se pudo cargar el modelo" | La red de la empresa puede estar bloqueando `huggingface.co` o `cdn.jsdelivr.net`. |
 
 ## La aplicación de escritorio (Windows)

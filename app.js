@@ -1125,6 +1125,7 @@ function setPaused(on) {
   $('#btn-pause').textContent = on ? '▶ Reanudar' : '⏸ Pausar';
   $('#btn-pause').classList.toggle('primary', on);
   document.body.classList.toggle('paused', on);
+  lockEngineSettings();
   updateStats();
 }
 
@@ -1159,6 +1160,15 @@ function setMicMuted(on) {
   else if (recording?.kind === 'live') sourceState('me', ...state);
 }
 
+// Engines can only be swapped while nothing new is being captured: outside a meeting or in pause.
+function lockEngineSettings() {
+  const locked = !!recording && !paused;
+  for (const id of ['#set-model', '#set-device']) {
+    $(id).disabled = locked;
+    $(id).title = locked ? 'Pon la reunión en pausa para cambiarlo' : '';
+  }
+}
+
 function setRecordingUI(on) {
   $('#btn-start').hidden = on;
   $('#btn-demo').hidden = on;
@@ -1168,7 +1178,7 @@ function setRecordingUI(on) {
   if (!on) $('#btn-share').hidden = true;
   $('#history').disabled = on;
   $('#btn-delete').disabled = on;
-  $('#set-model').disabled = $('#set-device').disabled = on;
+  lockEngineSettings();
   $('#btn-acta').disabled = on;
   updateStats();
 }
@@ -1372,6 +1382,7 @@ function init() {
     settings.device = $('#set-device').value;
     saveSettings();
     startWorker();
+    if (recording) notice('info', 'Cambiando de modelo. Puedes reanudar ya: lo que se diga esperará a que esté listo.');
   };
   $('#set-me').oninput = $('#set-others').oninput = () => {
     settings.me = $('#set-me').value.trim();
@@ -1499,6 +1510,15 @@ function init() {
   if (params.get('autotest') === 'demo') {
     const go = () => (engine ? startDemo() : setTimeout(go, 500));
     go();
+  }
+  // ?switchto=fast&at=40: changes the model halfway through the demo, to test swapping engines mid-meeting
+  if (params.get('switchto')) {
+    const whenPlaying = (fn) => (recording ? setTimeout(fn, Number(params.get('at') || 30) * 1000) : setTimeout(() => whenPlaying(fn), 500));
+    whenPlaying(() => {
+      $('#set-model').value = params.get('switchto');
+      $('#set-model').dispatchEvent(new Event('change'));
+      log('switched', { to: params.get('switchto'), pending: current?.items.filter((i) => i.text == null).length, drafts: current?.items.filter((i) => i.draft).length });
+    });
   }
   // ?autotest=file&src=demo.wav: a file with every voice mixed together, like a Teams recording
   if (params.get('autotest') === 'file') {
