@@ -4,10 +4,14 @@ const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 
 // ---------- settings ----------
-const DEFAULTS = { model: 'onnx-community/whisper-small', device: 'auto', me: 'Yo', others: 'Otros', echo: true, micId: '', voices: true };
+const DEFAULTS = { quality: 'mix', device: 'auto', me: 'Yo', others: 'Otros', echo: true, micId: '', voices: true };
 const settings = { ...DEFAULTS, ...readJSON('meetai.settings', {}) };
-if (params.get('model')) settings.model = params.get('model');
+// settings saved before "fast + improve" existed only had a model name
+if (settings.model && !readJSON('meetai.settings', {}).quality) settings.quality = settings.model.endsWith('whisper-base') ? 'fast' : 'mix';
+delete settings.model;
+if (params.get('quality')) settings.quality = params.get('quality');
 if (params.get('device')) settings.device = params.get('device');
+if (params.has('voices')) settings.voices = params.get('voices') !== '0';
 
 function readJSON(key, fallback) {
   try {
@@ -59,7 +63,7 @@ function save() {
       .map((s) => ({
         ...s,
         people: (s.people || []).map((p) => ({ ...p, c: p.c ? Array.from(p.c, (x) => Math.round(x * 1e4) / 1e4) : null })),
-        items: s.items.filter((i) => i.text != null).map(({ audio, session, batch, emb, ...rest }) => rest),
+        items: s.items.filter((i) => i.text).map(({ audio, session, batch, emb, draft, refining, ...rest }) => rest),
       }))
       .filter((s) => s.items.length || s === current);
     try {
@@ -79,6 +83,21 @@ const segById = new Map();
 let procMs = 0;
 let procAudioMs = 0;
 
+// "mix": the fast model writes each phrase within seconds and the precise one rewrites it later.
+const MODELS = { fast: 'onnx-community/whisper-base', precise: 'onnx-community/whisper-small' };
+const improves = () => settings.quality === 'mix';
+const liveModel = () => (settings.quality === 'precise' ? MODELS.precise : MODELS.fast);
+// with two engines, the fast one (which runs while people talk) keeps half the cores
+function threadsFor(role) {
+  const cores = navigator.hardwareConcurrency || 4;
+  if (!improves()) return Math.max(1, Math.min(8, cores - 2));
+  const live = Math.max(1, Math.min(6, Math.floor(cores / 2)));
+  return role === 'live' ? live : Math.max(1, Math.min(6, cores - live - 2));
+}
+let refiner = null;
+let refinerReady = false;
+let refineInflight = null;
+
 function startWorker() {
   worker?.terminate();
   engine = null;
@@ -90,12 +109,66 @@ function startWorker() {
     notice('error', 'No se pudo descargar el motor de transcripción (cdn.jsdelivr.net). Comprueba la conexión a internet o si la red de la empresa bloquea esa web. ' + (e.message || ''));
   };
   modelStatus('loading', 'Cargando modelo de voz…');
-  worker.postMessage({ type: 'load', model: settings.model, device: settings.device });
+  worker.postMessage({ type: 'load', model: liveModel(), device: settings.device, threads: threadsFor('live') });
   // an in-flight segment from a previous worker goes back to the queue
   for (const s of segById.values()) {
     if (s.status !== 'working') continue;
     s.status = 'pending';
     queue.push(s);
+  }
+  startRefiner();
+}
+
+function startRefiner() {
+  refiner?.terminate();
+  refiner = null;
+  refinerReady = false;
+  for (const s of refineInflight?.segs || []) s.refining = false;
+  refineInflight = null;
+  if (!improves()) {
+    // drafts that will never be improved are simply the final text
+    for (const s of segById.values()) {
+      if (!s.draft) continue;
+      s.draft = false;
+      s.audio = null;
+      if (s.text) upsertRow(s);
+      else removeSegment(s);
+    }
+    return;
+  }
+  refiner = new Worker('worker.js', { type: 'module' });
+  refiner.onmessage = onRefiner;
+  // without the precise engine the fast text still works; it just isn't improved
+  refiner.onerror = () => {
+    refiner = null;
+    refinerReady = false;
+  };
+  refiner.postMessage({ type: 'load', model: MODELS.precise, device: settings.device, threads: threadsFor('refine') });
+}
+
+function readyText() {
+  if (!engine) return 'Cargando…';
+  return `Listo · ${modelName()} · ${engine.device === 'webgpu' ? 'tarjeta gráfica' : 'procesador'}`;
+}
+
+function onRefiner({ data: m }) {
+  if (m.type === 'ready') {
+    refinerReady = true;
+    log('refiner-ready', m);
+    if (engine) modelStatus('ready', readyText());
+    pumpRefine();
+  } else if (m.type === 'progress') {
+    if (engine) modelStatus('ready', `${readyText()} · descargando el modelo preciso (solo la primera vez): ${Math.round(m.loaded / 1048576)} / ${Math.round(m.total / 1048576)} MB`);
+  } else if (m.type === 'fatal') {
+    log('warn', { refiner: m.message });
+    refiner?.terminate();
+    refiner = null;
+    refinerReady = false;
+  } else if (m.type === 'result') {
+    const batch = refineInflight;
+    refineInflight = null;
+    if (batch?.id === m.id) finishRefine(batch, m);
+    pumpRefine();
   }
 }
 
@@ -114,8 +187,7 @@ function onWorker({ data: m }) {
     notice('error', 'No se pudo cargar el modelo de voz. Comprueba la conexión a internet (solo hace falta la primera vez) y recarga la página. Si estás en la red de la empresa, puede que bloquee huggingface.co.');
   } else if (m.type === 'ready') {
     engine = m;
-    const where = m.device === 'webgpu' ? 'tarjeta gráfica' : `procesador, ${m.threads} hilo${m.threads > 1 ? 's' : ''}`;
-    modelStatus('ready', `Listo · ${modelName()} · ${where}`);
+    modelStatus('ready', readyText());
     log('ready', m);
     pump();
   } else if (m.type === 'result') {
@@ -123,6 +195,7 @@ function onWorker({ data: m }) {
     inflight = null;
     if (batch?.id === m.id) finishBatch(batch, m);
     pump();
+    pumpRefine();
   }
 }
 
@@ -133,16 +206,13 @@ const GAP_S = 1.2; // long enough for Whisper to start a new timestamped chunk a
 const WINDOW_S = 28; // Whisper reads up to 30 s at a time
 let batchCounter = 0;
 
-function pump() {
-  if (!engine || inflight) return;
-  const waiting = [...queue].sort((a, b) => a.t0 - b.t0);
-  if (!waiting.length) return updateStats();
+function pack(candidates, windowS = WINDOW_S) {
   const gap = Math.round(GAP_S * SR);
   const segs = [];
   let len = 0;
-  for (const s of waiting) {
+  for (const s of candidates) {
     const add = (segs.length ? gap : 0) + s.audio.length;
-    if (segs.length && len + add > WINDOW_S * SR) break;
+    if (segs.length && len + add > windowS * SR) break;
     segs.push(s);
     len += add;
   }
@@ -153,12 +223,40 @@ function pump() {
     audio.set(s.audio, off);
     spans.push([off / SR, (off + s.audio.length) / SR]);
     off += s.audio.length + gap;
+  }
+  return { batch: { id: ++batchCounter, segs, spans, audioMs: (len / SR) * 1000 }, audio };
+}
+
+function pump() {
+  if (!engine || inflight) return;
+  const waiting = [...queue].sort((a, b) => a.t0 - b.t0);
+  if (!waiting.length) return updateStats();
+  const { batch, audio } = pack(waiting);
+  for (const s of batch.segs) {
     queue.splice(queue.indexOf(s), 1);
     s.status = 'working';
     upsertRow(s);
   }
-  inflight = { id: ++batchCounter, segs, spans, audioMs: (len / SR) * 1000 };
-  worker.postMessage({ type: 'transcribe', id: inflight.id, audio, timestamps: segs.length > 1 }, [audio.buffer]);
+  inflight = batch;
+  worker.postMessage({ type: 'transcribe', id: batch.id, audio, timestamps: batch.segs.length > 1 }, [audio.buffer]);
+  updateStats();
+}
+
+// The precise model only starts when the fast one has nothing to do and nobody has spoken for a
+// moment: measured on the demo, running both while people talk slowed the fast text from 4 s to 11-18 s.
+const QUIET_MS = 1500;
+const REFINE_WINDOW_S = 12; // short jobs during a meeting, so a new sentence gets the CPU back soon
+let lastSpeech = 0;
+
+function pumpRefine() {
+  if (!refiner || !refinerReady || refineInflight || inflight || queue.length) return;
+  if (recording && !recording.stopping && Date.now() - lastSpeech < QUIET_MS) return;
+  const drafts = [...segById.values()].filter((s) => s.draft && !s.refining && s.audio).sort((a, b) => a.t0 - b.t0);
+  if (!drafts.length) return updateStats();
+  const { batch, audio } = pack(drafts, recording ? REFINE_WINDOW_S : WINDOW_S);
+  for (const s of batch.segs) s.refining = true;
+  refineInflight = batch;
+  refiner.postMessage({ type: 'transcribe', id: batch.id, audio, timestamps: batch.segs.length > 1 }, [audio.buffer]);
   updateStats();
 }
 
@@ -207,7 +305,6 @@ function finishBatch(batch, m) {
   const texts = m.error ? [] : shareText(batch, m);
   batch.segs.forEach((seg, i) => {
     if (!segById.has(seg.id)) return;
-    seg.audio = null;
     seg.status = 'done';
     if (m.error) {
       seg.text = '[no se pudo transcribir este fragmento]';
@@ -215,13 +312,38 @@ function finishBatch(batch, m) {
     } else {
       seg.text = cleanText(texts[i] || '');
     }
-    log('result', { src: seg.src, t: fmtTime(seg.t0), dur: Math.round(seg.dur), ms: Math.round(m.ms / batch.segs.length), text: seg.text });
-    if (!seg.text) {
+    // with "fast + improve" the audio stays until the precise model has rewritten the phrase,
+    // even when the fast one heard nothing: the precise one may catch what it missed
+    if (improves() && !seg.error) seg.draft = true;
+    else seg.audio = null;
+    log('result', { src: seg.src, t: fmtTime(seg.t0), dur: Math.round(seg.dur), batch: batch.segs.length, ms: Math.round(m.ms), lag: Math.round(Date.now() - (seg.t0 + seg.dur)), text: seg.text });
+    if (!seg.text && !seg.draft) {
       removeSegment(seg);
     } else {
       checkEcho(seg);
       upsertRow(seg);
     }
+  });
+  save();
+  updateStats();
+  maybeAutotestDone();
+}
+
+function finishRefine(batch, m) {
+  if (m.error) console.error(m.error);
+  const texts = m.error ? [] : shareText(batch, m);
+  batch.segs.forEach((seg, i) => {
+    seg.refining = false;
+    if (!segById.has(seg.id) || !seg.draft) return;
+    seg.draft = false;
+    seg.audio = null;
+    const better = m.error ? '' : cleanText(texts[i] || '');
+    // a correction typed by the user always wins; if the precise model heard nothing, the fast text stays
+    if (!seg.edited && better) seg.text = better;
+    log('refined', { src: seg.src, t: fmtTime(seg.t0), batch: batch.segs.length, ms: Math.round(m.ms), lag: Math.round(Date.now() - (seg.t0 + seg.dur)), text: seg.text });
+    if (!seg.text) return removeSegment(seg);
+    checkEcho(seg);
+    upsertRow(seg);
   });
   save();
   updateStats();
@@ -264,6 +386,7 @@ function onVoice({ data: m }) {
   const seg = segById.get(m.id);
   if (!seg) return;
   seg.voiceDone = true;
+  log('voice', { ms: Math.round(m.ms || 0), dur: Math.round(seg.dur) });
   if (m.emb && !seg.manual) {
     seg.emb = m.emb;
     assignPerson(seg);
@@ -541,6 +664,7 @@ class Segmenter {
     const rms = Math.sqrt(sum / frame.length);
     this.level = rms;
     const voiced = rms > this.threshold();
+    if (voiced) lastSpeech = Date.now();
     this.hist.push(rms);
     if (this.hist.length > 150) this.hist.shift();
 
@@ -609,6 +733,9 @@ let ctxWallOffset = 0;
 let recording = null; // { kind, nodes: [], worklets: [], streams: [], segs: {me, others} }
 // MeetAI can't see whether you are muted in Teams, so it has its own mute for your microphone.
 let micMuted = false;
+// Paused: capture stays open (resuming needs no new screen share) but nothing is transcribed.
+let paused = false;
+let statesBeforePause = null;
 
 async function audioContext() {
   if (!ctx || ctx.state === 'closed') {
@@ -624,7 +751,7 @@ function attach(node, src) {
   const seg = recording.segs[src];
   const worklet = new AudioWorkletNode(ctx, 'capture');
   worklet.port.onmessage = ({ data }) => {
-    if (!recording || (src === 'me' && micMuted)) return;
+    if (!recording || paused || (src === 'me' && micMuted)) return;
     seg.push(data.frame, ctxWallOffset + (data.tEnd - FRAME / SR) * 1000);
   };
   const mute = ctx.createGain();
@@ -747,6 +874,11 @@ function finalizeRecording(rec) {
   $('#btn-stop').textContent = '■ Parar';
   setRecordingUI(false);
   maybeAutotestDone();
+  paused = false;
+  statesBeforePause = null;
+  document.body.classList.remove('paused');
+  $('#btn-pause').textContent = '⏸ Pausar';
+  $('#btn-pause').classList.remove('primary');
   setMicMuted(false); // never carry a forgotten mute into the next meeting
   sourceState('me', '', 'Inactivo');
   sourceState('others', '', 'Inactivo');
@@ -852,6 +984,7 @@ function makeRow(seg) {
   text.className = 'text';
   text.addEventListener('input', () => {
     seg.text = text.textContent;
+    seg.edited = true; // the precise model must not overwrite it
     save();
   });
   meta.addEventListener('click', (e) => {
@@ -868,7 +1001,8 @@ function fillRow(seg) {
   const [meta, text] = row.children;
   const status = seg.text == null ? 'pending' : '';
   const person = seg.src === 'others' ? personOf(seg) : null;
-  row.className = `row ${seg.src} ${person ? 'c' + ((person.num - 1) % 6) : ''} ${status} ${seg.echo ? 'echo' : ''} ${seg.error ? 'errored' : ''}`;
+  row.className = `row ${seg.src} ${person ? 'c' + ((person.num - 1) % 6) : ''} ${status} ${seg.draft ? 'draft' : ''} ${seg.draft && !seg.text ? 'empty-draft' : ''} ${seg.echo ? 'echo' : ''} ${seg.error ? 'errored' : ''}`;
+  text.title = seg.draft ? 'Texto provisional: se mejorará en cuanto el PC tenga hueco' : '';
   row.dataset.t0 = seg.t0;
   meta.innerHTML = `<span class="who" title="Cambiar quién habla"></span> <span class="time"></span>`;
   meta.firstChild.textContent = speakerName(seg);
@@ -971,6 +1105,45 @@ function setSpeaking(src, on) {
   if (el.classList.contains('on')) el.textContent = on ? 'Hablando…' : 'Escuchando';
 }
 
+function setPaused(on) {
+  if (!recording || recording.stopping || recording.kind !== 'live') return;
+  paused = on;
+  if (on) {
+    statesBeforePause = {};
+    for (const src of ['me', 'others']) {
+      recording.segs[src].close(); // what was said before pausing is kept
+      recording.segs[src].level = 0;
+      const el = $('#state-' + src);
+      statesBeforePause[src] = [el.className.replace('state', '').trim(), el.textContent];
+      sourceState(src, 'off', 'En pausa: no se transcribe');
+    }
+  } else if (statesBeforePause) {
+    for (const src of ['me', 'others']) sourceState(src, ...statesBeforePause[src]);
+    statesBeforePause = null;
+  }
+  $('#btn-pause').textContent = on ? '▶ Reanudar' : '⏸ Pausar';
+  $('#btn-pause').classList.toggle('primary', on);
+  document.body.classList.toggle('paused', on);
+  updateStats();
+}
+
+// A blank screen to start over. What was there stays saved under "Reuniones"; during a
+// meeting the recording simply carries on into the new, empty meeting.
+function startFresh() {
+  if (!current || !current.items.length) return notice('info', 'La pantalla ya está en blanco.');
+  if (recording) {
+    for (const s of Object.values(recording.segs)) s.close();
+    current.end = Date.now();
+    for (const p of current.people || []) rememberVoice(p);
+    save();
+    newSession(recording.kind, current.title);
+  } else {
+    newSession('live', 'Reunión');
+  }
+  setRecordingUI(!!recording);
+  notice('info', 'Pantalla en blanco. Lo anterior sigue guardado en el desplegable «Reuniones».');
+}
+
 function setMicMuted(on) {
   micMuted = on;
   if (on && recording) {
@@ -980,13 +1153,16 @@ function setMicMuted(on) {
   $('#btn-mute').textContent = on ? '🎤 Activar micro' : '🔇 Silenciar';
   $('#btn-mute').classList.toggle('muted', on);
   $('#card-me').classList.toggle('muted', on);
-  if (recording?.kind === 'live') sourceState('me', on ? 'off' : 'on', on ? 'Silenciado: no se transcribe lo que digas' : 'Escuchando');
+  const state = on ? ['off', 'Silenciado: no se transcribe lo que digas'] : ['on', 'Escuchando'];
+  if (paused && statesBeforePause) statesBeforePause.me = state; // shown again when resuming
+  else if (recording?.kind === 'live') sourceState('me', ...state);
 }
 
 function setRecordingUI(on) {
   $('#btn-start').hidden = on;
   $('#btn-demo').hidden = on;
   $('#btn-stop').hidden = !on;
+  $('#btn-pause').hidden = !on || recording?.kind !== 'live';
   $('#btn-continue').hidden = on || !current || current.kind !== 'live' || !current.items.length;
   if (!on) $('#btn-share').hidden = true;
   $('#history').disabled = on;
@@ -1000,10 +1176,12 @@ function updateStats() {
   const pend = current ? current.items.filter((i) => i.text == null) : [];
   const pendMs = pend.reduce((a, s) => a + s.dur, 0);
   const parts = [];
-  if (recording) parts.push(`<span class="rec-dot"></span>${recording.kind === 'demo' ? 'Reproduciendo ejemplo' : 'Grabando'} · ${fmtDuration(Date.now() - current.start)}`);
+  if (recording) parts.push(`<span class="rec-dot"></span>${paused ? 'En pausa' : recording.kind === 'demo' ? 'Reproduciendo ejemplo' : 'Grabando'} · ${fmtDuration(Date.now() - current.start)}`);
   else if (current?.items.length) parts.push(`${current.items.filter((i) => i.text && !i.echo).length} frases`);
   else parts.push('Sin reunión en curso.');
   if (pend.length) parts.push(`pendiente de transcribir: ${fmtDuration(pendMs)}${engine ? '' : ' (esperando al modelo)'}`);
+  const drafts = [...segById.values()].filter((i) => i.draft);
+  if (drafts.length) parts.push(`mejorando: ${fmtDuration(drafts.reduce((a, x) => a + x.dur, 0))}${refinerReady ? '' : ' (preparando el modelo preciso)'}`);
   if (procMs > 0) parts.push(`velocidad ${(procAudioMs / procMs).toFixed(1).replace('.', ',')}× tiempo real`);
   const echoes = current ? current.items.filter((i) => i.echo).length : 0;
   if (echoes) parts.push(`${echoes} eco${echoes > 1 ? 's' : ''} oculto${echoes > 1 ? 's' : ''} (<a id="toggle-echo">${document.body.classList.contains('show-echo') ? 'ocultar' : 'ver'}</a>)`);
@@ -1074,10 +1252,17 @@ function downloadBlob(blob, name) {
 // ---------- minutes (acta) ----------
 // Two ways to fill in the minutes: a draft spotted automatically in the transcript, or the
 // minutes the company's Copilot writes from instructions prepared here (see acta.js).
-function openActa(s) {
+function openActa(s, anyway = false) {
   if (!s) return;
   if (!s.items.some((i) => i.text)) return notice('warn', 'Todavía no hay nada transcrito para hacer el acta.');
   if (recording || s.items.some((i) => i.text == null)) return notice('warn', 'Espera a que termine la transcripción para hacer el acta.');
+  const drafts = s.items.filter((i) => i.draft);
+  if (drafts.length && !anyway) {
+    return notice('warn', `Todavía se está mejorando la transcripción (${fmtDuration(drafts.reduce((a, x) => a + x.dur, 0))} de audio). Puedes esperar a que termine o hacer el acta ya con el texto rápido.`, [
+      ['Hacer el acta ya', () => openActa(s, true)],
+    ]);
+  }
+  hideNotice();
   const dialog = $('#acta-dialog');
   dialog.dataset.session = s.id;
   $('#acta-paste').value = s.acta?.source === 'copilot' ? s.acta.text : '';
@@ -1149,10 +1334,10 @@ function log(kind, data) {
 let autotestDone = false;
 function maybeAutotestDone() {
   if (autotestDone || !params.has('autotest') || recording || !current || !['demo', 'file'].includes(current.kind)) return;
-  if (current.items.some((i) => i.text == null)) return;
+  if (current.items.some((i) => i.text == null || i.draft)) return;
   if (voiceActive() && current.items.some((i) => i.src === 'others' && !i.voiceDone && !i.person)) return;
   autotestDone = true;
-  log('done', { engine, rtf: +(procAudioMs / procMs).toFixed(2), people: (current.people || []).map((p) => p.name), text: exportText(current) });
+  log('done', { engine, quality: settings.quality, rtf: +(procAudioMs / procMs).toFixed(2), people: (current.people || []).map((p) => p.name), text: exportText(current) });
   if (params.get('acta') === 'copilot') {
     fetch(params.get('paste'))
       .then((r) => r.text())
@@ -1172,7 +1357,7 @@ function applyNames() {
 
 // ---------- wire up ----------
 function init() {
-  $('#set-model').value = settings.model;
+  $('#set-model').value = settings.quality;
   $('#set-device').value = settings.device;
   $('#set-me').value = settings.me;
   $('#set-others').value = settings.others;
@@ -1182,7 +1367,7 @@ function init() {
   renderVoiceBook();
 
   $('#set-model').onchange = $('#set-device').onchange = () => {
-    settings.model = $('#set-model').value;
+    settings.quality = $('#set-model').value;
     settings.device = $('#set-device').value;
     saveSettings();
     startWorker();
@@ -1259,6 +1444,8 @@ function init() {
   $('#btn-stop').onclick = stopRecording;
   $('#btn-share').onclick = shareAgain;
   $('#btn-mute').onclick = () => setMicMuted(!micMuted);
+  $('#btn-pause').onclick = () => setPaused(!paused);
+  $('#btn-fresh').onclick = startFresh;
   $('#btn-demo').onclick = startDemo;
   $('#file').onchange = (e) => {
     const f = e.target.files[0];
@@ -1291,7 +1478,10 @@ function init() {
   window.addEventListener('beforeunload', (e) => {
     if (recording || (current && current.items.some((i) => i.text == null))) e.preventDefault();
   });
-  setInterval(() => recording && updateStats(), 1000);
+  setInterval(() => {
+    if (recording) updateStats();
+    pumpRefine(); // picks up the pauses in the conversation
+  }, 1000);
 
   current = sessions.find((s) => s.items.length) || null;
   renderHistory();

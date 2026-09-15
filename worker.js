@@ -89,13 +89,15 @@ async function build(model, device, dtype) {
 
 async function handle(m) {
   if (m.type === 'load') {
+    // with two engines at once (fast text + background improvement) each gets its share of cores
+    if (m.threads && self.crossOriginIsolated) env.backends.onnx.wasm.numThreads = m.threads;
     const t = performance.now();
     const order = m.device === 'auto' ? ['wasm', 'webgpu'] : [m.device];
     for (const device of order) {
       try {
         const r = await create(m.model, device);
         asr = r.p;
-        postMessage({ type: 'ready', device, threads, dtype: r.dtype, gpu: r.gpu, ms: performance.now() - t });
+        postMessage({ type: 'ready', device, threads: env.backends.onnx.wasm.numThreads, dtype: r.dtype, gpu: r.gpu, ms: performance.now() - t });
         return;
       } catch (err) {
         console.warn(device, err);

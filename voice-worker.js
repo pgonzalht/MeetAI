@@ -34,6 +34,7 @@ async function handle(m) {
     }
   } else if (m.type === 'embed') {
     if (!model) return postMessage({ type: 'embedding', id: m.id, emb: null });
+    const t0 = performance.now();
     try {
       const out = await model(await proc(m.audio));
       const v = out.last_hidden_state.data;
@@ -42,7 +43,7 @@ async function handle(m) {
       norm = Math.sqrt(norm) || 1;
       const emb = new Float32Array(v.length);
       for (let i = 0; i < v.length; i++) emb[i] = v[i] / norm;
-      postMessage({ type: 'embedding', id: m.id, emb }, [emb.buffer]);
+      postMessage({ type: 'embedding', id: m.id, emb, ms: performance.now() - t0 }, [emb.buffer]);
     } catch (err) {
       postMessage({ type: 'embedding', id: m.id, emb: null, error: String((err && err.message) || err) });
     }

@@ -18,7 +18,8 @@ Hay dos formas de usarlo:
 3. En la ventana de compartir, elige **Toda la pantalla** y activa **Compartir también el audio del sistema**. Esto solo sirve para que la página oiga lo que suena en tu PC; no se comparte con nadie.
 4. Da permiso al micrófono.
 5. Vuelve a Teams. La pestaña puede quedarse en segundo plano.
-6. Al terminar, pulsa **Parar** y usa **Copiar** o **Descargar .txt**.
+6. Durante la reunión puedes pulsar **⏸ Pausar** (deja de transcribir sin cortar nada; **▶ Reanudar** sigue sin volver a compartir pantalla), **🔇 Silenciar** en la tarjeta «Yo» si te silencias en Teams, o **🧹 Pantalla en blanco** para empezar de cero: lo anterior queda guardado en «Reuniones».
+7. Al terminar, pulsa **Parar** y usa **Copiar**, **Descargar .txt** o **📝 Acta (Word)**.
 
 Las reuniones quedan guardadas en ese navegador (desplegable de abajo). El texto se puede corregir haciendo clic encima.
 
@@ -51,7 +52,7 @@ Se probó a redactar el acta con una IA pequeña dentro del navegador (Qwen3 0,6
 | No aparece nada de "Otros" | Al compartir no se activó el audio del sistema. Pulsa *Compartir audio de la reunión* y activa la casilla de audio. |
 | Te silencias en Teams y sigue transcribiendo lo que dices | MeetAI no puede saber si estás silenciado en Teams. Pulsa **🔇 Silenciar** en la tarjeta «Yo» mientras lo estés; se quita solo al terminar la reunión. |
 | Oyes Teams por unos cascos y no se capta | Pon esos cascos como salida predeterminada de Windows. |
-| El contador "pendiente" crece sin parar | El PC no da abasto. No se pierde nada: cuando se acumulan frases, se transcriben juntas y se recupera el retraso. Si aun así no alcanza, elige un modelo más rápido en *Ajustes*. |
+| El texto sale en gris | Es provisional: lo escribe al momento el modelo rápido y el preciso lo reescribe en cuanto el PC tiene hueco (pasa a color normal). En *Ajustes → Velocidad y precisión* puedes usar solo uno de los dos. |
 | "No se pudo cargar el modelo" | La red de la empresa puede estar bloqueando `huggingface.co` o `cdn.jsdelivr.net`. |
 
 ## La aplicación de escritorio (Windows)
@@ -78,5 +79,6 @@ Al no estar firmado digitalmente, Windows puede mostrar el aviso de SmartScreen 
 
 - Hay **dos entradas separadas**: el micrófono (*Yo*) y el audio del sistema compartido con `getDisplayMedia` (*Otros*). Por eso sabe quién habla sin tener que adivinarlo.
 - Un **detector de voz** corta el audio en frases (en las pausas, o como máximo cada 25 s) y ninguna frase se descarta: si el PC va lento, se ponen en cola.
+- Por defecto hay **dos pasadas**: Whisper *base* escribe cada frase en unos segundos y Whisper *small* la reescribe cuando el procesador está libre (medido: 4 s de retraso frente a 15-35 s usando solo el preciso con conversación continua). Las frases que esperan se juntan en una sola pasada y el texto se reparte por marcas de tiempo.
 - Las frases se transcriben con **Whisper** ([Transformers.js](https://github.com/huggingface/transformers.js)), usando la tarjeta gráfica (WebGPU) o el procesador (WebAssembly multihilo).
 - Si usas altavoces, el micrófono oye también a los demás. La opción *Quitar eco* oculta esas frases duplicadas.
